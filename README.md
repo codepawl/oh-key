@@ -18,17 +18,15 @@ Early. The engine, charset conversion and the Windows app are in place. The macO
 
 ### Windows
 
-While the repository is private, the install needs the [GitHub CLI](https://cli.github.com) signed in.
+Run this in PowerShell:
 
 ```powershell
-gh auth login
-gh repo clone codepawl/oh-key
-.\oh-key\install.ps1
+irm https://raw.githubusercontent.com/codepawl/oh-key-releases/main/install.ps1 | iex
 ```
 
-`install.ps1` downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` and `oh-key-cli.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. Add `-StartAtSignIn` to start the app at every sign-in.
+The script downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` and `oh-key-cli.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. To start the app at every sign-in too, save `install.ps1` and run `.\install.ps1 -StartAtSignIn`.
 
-You can also download `oh-key-windows-<arch>.zip` from the latest release and unzip it anywhere.
+You can also download `oh-key-windows-<arch>.zip` from the [latest release](https://github.com/codepawl/oh-key-releases/releases/latest) and unzip it anywhere.
 
 ### macOS
 

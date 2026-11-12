@@ -31,7 +31,7 @@ npx wrangler secret put GITHUB_TOKEN
 npm run deploy
 ```
 
-Make sure the `auto-report` label exists in the repo (GitHub drops unknown labels on issue creation only if you lack triage rights; creating the label first is safest). Then set `REPORT_ENDPOINT` in the Windows and macOS apps to `https://oh-key-report.<your-subdomain>.workers.dev/v1/report`.
+Make sure the `auto-report` label exists in the repo (GitHub drops unknown labels on issue creation only if you lack triage rights; creating the label first is safest). Then set `REPORT_ENDPOINT` in the Windows and macOS apps to the address of your Worker (the project's own runs on `https://oh-key-report.codepawl.com/v1/report`, set by `routes` in `wrangler.toml`).
 
 ## Develop
 

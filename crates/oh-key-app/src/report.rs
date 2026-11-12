@@ -150,7 +150,7 @@ pub fn scrub_text(text: &str, identity: &Identity, max_characters: usize) -> Str
     scrubbed.chars().take(max_characters).collect()
 }
 
-/// The 8.3 form Windows may use for a long profile folder: `NXAN2~1` for `nxan2long`. Only a
+/// The 8.3 form Windows may use for a long profile folder: `SOMEON~1` for `someonelong`. Only a
 /// name that is too long or holds a space gets one.
 fn short_folder_name(user_name: &str) -> Option<String> {
     let needs_short_form = user_name.chars().count() > 8 || user_name.contains(' ');
@@ -1038,12 +1038,12 @@ mod tests {
     #[test]
     fn names_are_matched_whatever_the_case_or_script() {
         let identity = Identity {
-            home: Some("C:\\Users\\Nguy\u{1ec5}n An".to_string()),
-            user_name: Some("Nguy\u{1ec5}n An".to_string()),
+            home: Some("C:\\Users\\Tr\u{1ea7}n Lan".to_string()),
+            user_name: Some("Tr\u{1ea7}n Lan".to_string()),
             computer_name: None,
         };
         assert_eq!(
-            scrub_text("by NGUY\u{1ec4}N AN today", &identity, 100),
+            scrub_text("by TR\u{1ea6}N LAN today", &identity, 100),
             "by user today"
         );
     }
@@ -1052,11 +1052,11 @@ mod tests {
     fn the_short_form_of_a_long_profile_folder_is_scrubbed() {
         let identity = Identity {
             home: None,
-            user_name: Some("Nguyenxuanan".to_string()),
+            user_name: Some("Someonelongname".to_string()),
             computer_name: None,
         };
         assert_eq!(
-            scrub_text(r"C:\Users\NGUYEN~1\a.txt", &identity, 100),
+            scrub_text(r"C:\Users\SOMEON~1\a.txt", &identity, 100),
             r"C:\Users\user\a.txt"
         );
     }

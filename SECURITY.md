@@ -4,7 +4,7 @@ An input method sees every key you type, so security reports matter to us.
 
 ## Report a problem
 
-Report a security problem privately on GitHub: open the **Security** tab of this repository and pick **Report a vulnerability**. Do not open a public issue for it.
+Report a security problem privately on GitHub: open the **Security** tab of [codepawl/oh-key-releases](https://github.com/codepawl/oh-key-releases/security) and pick **Report a vulnerability**. Do not open a public issue for it.
 
 We reply as soon as we can and say what we will do.
 

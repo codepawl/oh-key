@@ -98,7 +98,7 @@ fn code_and_tech_tokens_survive() {
                 "https://github.com/codepawl/oh-key",
                 "https://github.com/codepawl/oh-key",
             ),
-            ("an.nx@gmail.com", "an.nx@gmail.com"),
+            ("mai.lan@gmail.com", "mai.lan@gmail.com"),
             ("v1.2.3", "v1.2.3"),
             ("--release", "--release"),
             ("package.json", "package.json"),

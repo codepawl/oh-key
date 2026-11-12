@@ -949,10 +949,12 @@ fn scroll_note(rows: &Range<usize>, total: usize) -> String {
 
 /// `oh-key.exe --render-png excluded-apps out.png`: the window drawn into a file, with the
 /// settings' list and the programs open now.
+/// Draws sample apps, never this machine's settings or open windows: the render ships in the
+/// docs, and window titles carry private text.
 pub fn render_png(graphics: &Graphics, path: &Path) -> Result<()> {
     let offscreen = Offscreen::new(graphics, WIDTH as u32, window_height().round() as u32)?;
-    let apps = oh_key_ipc::load_settings().excluded_apps;
-    let running = running_programs();
+    let apps = vec!["code.exe".to_owned(), "windowsterminal.exe".to_owned()];
+    let running = sample_running_programs();
     let offered = programs_to_offer(&running, &apps);
     let view = View {
         apps: &apps,
@@ -963,6 +965,21 @@ pub fn render_png(graphics: &Graphics, path: &Path) -> Result<()> {
     };
     draw(&offscreen.target, graphics, &view, None);
     offscreen.save_png(path)
+}
+
+fn sample_running_programs() -> Vec<RunningApp> {
+    [
+        ("notepad.exe", "Untitled - Notepad"),
+        ("msedge.exe", "New tab - Microsoft Edge"),
+        ("winword.exe", "Document1 - Word"),
+        ("explorer.exe", "File Explorer"),
+    ]
+    .into_iter()
+    .map(|(exe, title)| RunningApp {
+        exe: exe.to_owned(),
+        title: title.to_owned(),
+    })
+    .collect()
 }
 
 #[cfg(test)]

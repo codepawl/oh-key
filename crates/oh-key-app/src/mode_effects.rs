@@ -3,8 +3,8 @@
 //!
 //! Full screen apps still get both: that is where the tray icon is hidden and the user most
 //! needs to see the switch. Windows reports any window covering the monitor (a maximised
-//! browser, a borderless game) as "busy", so that state cannot mean "quiet" (measured on the
-//! owner's PC, 2026-11-13: "busy" with only ordinary apps open, which hid the effect at random).
+//! browser, a borderless game) as "busy", so that state cannot mean "quiet" (with only ordinary
+//! apps open it can report "busy", which hid the effect at random).
 //! Only two states hold something back: a Direct3D game in exclusive full screen keeps the sound
 //! but loses the badge, since a topmost window can knock it out of exclusive mode, and
 //! Windows' presentation mode silences both. The badge also follows Windows' "Animation

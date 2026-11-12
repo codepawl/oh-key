@@ -4,7 +4,7 @@ Thanks for helping. The most useful things right now are typing bug reports and 
 
 ## Report a bug
 
-Open an issue with the bug report form. Include:
+Open an issue in [codepawl/oh-key-releases](https://github.com/codepawl/oh-key-releases/issues). Include:
 
 - The version: `oh-key-cli --version`.
 - Your system and the application where it happens.

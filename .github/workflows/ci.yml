@@ -98,8 +98,8 @@ jobs:
       - name: Build the hook examples
         run: cargo build -p oh-key-app --examples --locked --target x86_64-pc-windows-msvc
       - name: Run hook_suite and hook_e2e
-        # Hosted runners give the suite a focusable window (runs 43194692427 and 43195361798
-        # passed), so a mismatch here is a hook bug and fails the job.
+        # Hosted runners give the suite a focusable window and the suite
+        # passes there, so a mismatch here is a hook bug and fails the job.
         shell: pwsh
         timeout-minutes: 8
         run: |
