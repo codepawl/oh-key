@@ -50,6 +50,8 @@ GPL-3.0-or-later. Code ported from Unikey keeps its GPL terms. Do not copy in co
 
 ## Trying the app
 
+Once CI is green on a pushed commit, build it and install it with `tools/dev-install.ps1` without asking (An, 2026-11-12: "CI xanh thì cài luôn nha"). Never install a build whose CI is red or still running.
+
 1. Build with `CARGO_TARGET_DIR=target/lead`: `cargo build -p oh-key-app --release --target x86_64-pc-windows-msvc`.
 2. Run `tools/dev-install.ps1` (no elevation). It stops the running `oh-key.exe` (Program Files or `%LOCALAPPDATA%\Programs\oh-key`), copies the build into `%LOCALAPPDATA%\Programs\oh-key`, refreshes an existing "start with Windows" value to that path and starts the app through explorer.
 3. Type in Notepad or a browser. Alt+Z or Ctrl+Shift switches V and E; an app on the "Ứng dụng tắt oh-key" list keeps its keys untouched.
