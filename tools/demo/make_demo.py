@@ -2,7 +2,7 @@
 
 Each frame shows the real engine output for the keys typed so far (oh-key-cli
 type on every prefix), drawn by headless Chrome and encoded with ffmpeg.
-Run it through the GPU queue: bash ~/.agents/tools/gpu-lock.sh uv run --no-project python tools/demo/make_demo.py
+Run it with: uv run --no-project python tools/demo/make_demo.py
 """
 import html
 import json

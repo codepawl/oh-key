@@ -174,7 +174,7 @@ describe("issue creation and dedupe", () => {
   });
 
   it("normalizes numbers and paths in the signature", () => {
-    expect(normalizeMessage("failed at C:\\Users\\bob\\x.dll code 12")).toBe("failed at <path> code <n>");
+    expect(normalizeMessage("failed at D:\\builds\\x.dll code 12")).toBe("failed at <path> code <n>");
     expect(signatureInput(sampleReport())).toContain("oh_key_engine::apply");
   });
 });

@@ -160,7 +160,7 @@ cargo check-all
 cargo test-all
 ```
 
-To redraw the demo, run `bash ~/.agents/tools/gpu-lock.sh uv run --no-project python tools/demo/make_demo.py`. It needs Chrome and ffmpeg.
+To redraw the demo, run `uv run --no-project python tools/demo/make_demo.py`. It needs Chrome and ffmpeg.
 
 ## Roadmap
 
