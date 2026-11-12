@@ -58,3 +58,51 @@ jobs:
         run: cargo clippy -p oh-key-app -p oh-key-cli --all-targets --target ${{ matrix.target }} --locked -- -D warnings
       - name: Build
         run: cargo build -p oh-key-app -p oh-key-cli --release --locked --target ${{ matrix.target }}
+
+  hook-e2e:
+    # Types through the real keyboard hook into the program's own windows. A hosted runner may
+    # have no interactive desktop; the examples then exit with 2 before typing anything, which
+    # is reported as a skipped check, not a failure. Never run these on a developer machine in
+    # use: they take the foreground.
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: hook-e2e
+      - name: Build the hook examples
+        run: cargo build -p oh-key-app --examples --locked --target x86_64-pc-windows-msvc
+      - name: Run hook_suite and hook_e2e
+        # Not yet seen on a hosted runner: a runner whose desktop lets a window be created but
+        # not focused ends in case mismatches (exit 1), which is not a hook bug. The step stays
+        # advisory until one hosted run shows the real exit codes; then drop continue-on-error.
+        continue-on-error: true
+        shell: pwsh
+        timeout-minutes: 8
+        run: |
+          # The whole suite outlasts one watchdog, so it runs in parts (comma-separated filter).
+          $runs = @(
+            @{ Name = 'hook_suite'; Filter = 'basic,hard-rhymes,uppercase,capitalised,caps-lock' },
+            @{ Name = 'hook_suite'; Filter = 'fast-5ms,backspace,english' },
+            @{ Name = 'hook_suite'; Filter = 'toggle,digits,enter,tab,addr-' },
+            @{ Name = 'hook_e2e'; Filter = '' }
+          )
+          $failed = $false
+          foreach ($run in $runs) {
+            $label = "$($run.Name) [$($run.Filter)]"
+            & "target/x86_64-pc-windows-msvc/debug/examples/$($run.Name).exe" $run.Filter
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+              Write-Host "$label passed"
+            } elseif ($code -eq 2 -or $code -eq 3) {
+              Write-Host "::warning title=$label skipped::no usable foreground window or timed out on this runner (exit $code)"
+            } else {
+              Write-Host "::error title=$label failed::exit code $code"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }

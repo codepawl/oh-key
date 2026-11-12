@@ -179,12 +179,19 @@ mod e2e {
         let Ok((window, edit)) = create_windows() else {
             return 2;
         };
-        let provider = Box::new(move || HookInputs {
-            excluded_apps: Vec::new(),
-            vietnamese: true,
-            engine: Config::default(),
-            toggle_hotkey: oh_key_ipc::ToggleHotkey::Disabled,
-            macros: None,
+        let mut delivered = false;
+        let provider = Box::new(move || {
+            if delivered {
+                return None;
+            }
+            delivered = true;
+            Some(HookInputs {
+                excluded_apps: Vec::new(),
+                vietnamese: true,
+                engine: Config::default(),
+                toggle_hotkey: oh_key_ipc::ToggleHotkey::Disabled,
+                macros: None,
+            })
         });
         let options = HookOptions {
             accept_foreign_injected_keys: true,
@@ -209,7 +216,7 @@ mod e2e {
         unsafe {
             let _ = SetFocus(Some(edit));
         }
-        // The hook thread notices the foreground change on its 50 ms timer.
+        // The hook notices the foreground change at the start of the next key event.
         pump_messages(Duration::from_millis(400));
         for character in KEYS_TO_TYPE.chars() {
             if unsafe { GetForegroundWindow() } != window {

@@ -1,4 +1,4 @@
-//! `oh-key.exe --render-png <settings|tray-menu-preview> <out.png>`: draws a window's content
+//! `oh-key.exe --render-png <settings|settings-dropdown|settings-focus|tray-menu-preview|...> <out.png>`: draws a window's content
 //! offscreen to a PNG, so the look can be checked without opening anything on the desktop.
 
 use std::path::Path;
@@ -8,6 +8,7 @@ use windows::core::Result;
 
 use crate::graphics::Graphics;
 use crate::offscreen::Offscreen;
+use crate::settings_window::Preview;
 use crate::{
     converter_window, excluded_apps_window, macros_window, mode_icon, settings_window, style, tray,
 };
@@ -18,16 +19,23 @@ const PREVIEW_ICON_SIZE: f32 = 64.0;
 
 pub fn render(graphics: &Graphics, window: &str, path: &Path) -> Result<()> {
     match window {
-        "settings" => settings_window::render_png(graphics, &oh_key_ipc::load_settings(), path),
+        "settings" => render_settings(graphics, Preview::Plain, path),
+        "settings-dropdown" => render_settings(graphics, Preview::Dropdown, path),
+        "settings-focus" => render_settings(graphics, Preview::Focus, path),
         "excluded-apps" => excluded_apps_window::render_png(graphics, path),
         "tray-menu-preview" => render_tray_preview(graphics, path),
         "macros" => macros_window::render_png(graphics, path),
         "converter" => converter_window::render_png(graphics, path),
         _ => Err(windows::core::Error::new(
             windows::Win32::Foundation::E_INVALIDARG,
-            "window must be settings or tray-menu-preview",
+            "window must be settings, settings-dropdown, settings-focus, excluded-apps, macros, converter or tray-menu-preview",
         )),
     }
+}
+
+fn render_settings(graphics: &Graphics, preview: Preview, path: &Path) -> Result<()> {
+    let settings = oh_key_ipc::load_settings();
+    settings_window::render_png(graphics, &settings, preview, path)
 }
 
 /// The two tray icons at 64 px beside the menu's entries. The real menu is a native popup,

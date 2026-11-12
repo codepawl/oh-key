@@ -10,7 +10,7 @@ Vietnamese typing app for Windows in Rust, in the Unikey style (a tray app with 
 - `crates/oh-key-macro`: macro (abbreviation) expansion. Pure.
 - `crates/oh-key-cli`: the `oh-key-cli` binary (`oh-key-cli type <keys>`).
 - `crates/oh-key-ipc`: what the parts of the app share: `config.toml` format (`Settings`, including `excluded_apps`; an old `hook_apps` line is ignored) and `SharedState`, a named memory block (`Local\oh-key-state`) with a seqlock-guarded settings copy, a generation counter and the global VI/EN mode, used by the tray, the hook and the second-instance launch.
-- `crates/oh-key-app`: the `oh-key` tray app. `src/hook.rs` is the `WH_KEYBOARD_LL` hook that types Vietnamese in every app whose exe is not in `excluded_apps` (the pure half, diff plus key decision plus session, is unit tested); the hotkeys (Ctrl+Shift, Alt+Z) work in every app. Mode icon and control panel; the look is copied from oh-snap. `oh-key --render-png settings|tray-menu-preview|excluded-apps <out.png>` draws a window offscreen; `docs/settings.png` is the settings render. `examples/hook_e2e.rs` types into its own window through the hook.
+- `crates/oh-key-app`: the `oh-key` tray app. `src/hook.rs` is the `WH_KEYBOARD_LL` hook that types Vietnamese in every app whose exe is not in `excluded_apps` (the pure half, diff plus key decision plus session, is unit tested); the hotkeys (Ctrl+Shift, Alt+Z) work in every app. Mode icon and control panel; the look is copied from oh-snap. `oh-key --render-png settings|tray-menu-preview|excluded-apps <out.png>` draws a window offscreen; `docs/settings.png` is the settings render. `src/hook_cases.rs` is the case table shared by `examples/hook_suite.rs` (types ~34 cases into its own windows through the real hook, CI only) and `src/hook_headless.rs` (the same cases through `KeyFlow`, the type `HookState` drives, into a simulated text field with the suggestion landing at `{WAIT}` and after every key, run by `cargo test-all`); `examples/hook_e2e.rs` types into its own window through the hook. The hook has no timer: it checks the foreground window and the shared-state counters at the start of each key event; the macro file is read on a short thread and program names are cached by process id, so the callback does no file I/O.
 - macOS IMK and Linux fcitx5/ibus frontends come later.
 - `docs/research`: notes on Unikey behaviour and design decisions. `windows-tsf.md` is kept for reference only: the TSF text service was dropped on 2026-11-12.
 - `install.ps1` (release install into `%LOCALAPPDATA%\Programs\oh-key`, no admin, `-StartAtSignIn`) and `tools/dev-install.ps1` (same from a local `target\lead` build; stops the running app and starts the new one through explorer).
@@ -24,7 +24,7 @@ cargo check-all   # clippy, msvc target, -D warnings
 cargo test-all    # tests, msvc target
 ```
 
-The aliases in `.cargo/config.toml` pin the msvc target: this machine defaults to the gnu host. With the hook, also run the end-to-end check once: `cargo run -p oh-key-app --example hook_e2e --target x86_64-pc-windows-msvc` (exit 0 = pass; it installs the hook for under 30 seconds and types only into its own window).
+The aliases in `.cargo/config.toml` pin the msvc target: this machine defaults to the gnu host. The hook logic is checked headless by `cargo test-all` (the hook suite cases replayed through `Session` into a simulated text field). Never run `hook_e2e` or `hook_suite` on the owner's machine: they open a window, take the foreground and steal focus while the owner works (An, 2026-11-12). They run in CI (`hook-e2e` job on windows-latest); run them locally only when An asks.
 
 CI runs the pure crates on Windows, Linux and macOS, so keep them free of platform code. Engine changes need a typing test (keys in, text out).
 
@@ -49,4 +49,4 @@ GPL-3.0-or-later. Code ported from Unikey keeps its GPL terms. Do not copy in co
 1. Build with `CARGO_TARGET_DIR=target/lead`: `cargo build -p oh-key-app --release --target x86_64-pc-windows-msvc`.
 2. Run `tools/dev-install.ps1` (no elevation). It stops the running `oh-key.exe` (Program Files or `%LOCALAPPDATA%\Programs\oh-key`), copies the build into `%LOCALAPPDATA%\Programs\oh-key`, refreshes an existing "start with Windows" value to that path and starts the app through explorer.
 3. Type in Notepad or a browser. Alt+Z or Ctrl+Shift switches V and E; an app on the "Ứng dụng tắt oh-key" list keeps its keys untouched.
-4. For a repeatable check without the tray, run `hook_e2e` (see Checks). Do not drive the keyboard of the user's session from a script: the hook is global.
+4. For a repeatable check without the tray, use the headless tests or the CI `hook-e2e` job (see Checks). Do not drive the keyboard of the user's session from a script: the hook is global.

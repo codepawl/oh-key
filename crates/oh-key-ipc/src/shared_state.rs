@@ -48,7 +48,8 @@ impl SharedState {
         Self::open_named(&format!("{MAPPING_NAME}{}", instance_suffix()))
     }
 
-    pub(crate) fn open_named(name: &str) -> Result<Self> {
+    /// A mapping under its own name, for tests that must not touch the running app's state.
+    pub fn open_named(name: &str) -> Result<Self> {
         let mapping = open_or_create_mapping(name)?;
         let view = unsafe {
             MapViewOfFile(

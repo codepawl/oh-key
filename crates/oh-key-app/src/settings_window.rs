@@ -1,6 +1,6 @@
-//! The control panel: every option in two columns of groups, each a row of quiet text
-//! buttons, as in oh-snap's settings window. A click saves at once and publishes the change
-//! to the running hook.
+//! The control panel: one small window with two mode buttons, two cards of dropdowns, chips and
+//! switches, and three buttons that open the tool windows. A click saves at once and publishes
+//! the change to the running hook; the mode buttons set the global mode like the tray does.
 
 use std::path::Path;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -12,7 +12,7 @@ use windows::Win32::Graphics::Direct2D::Common::{
 use windows::Win32::Graphics::Direct2D::{
     D2D1_FEATURE_LEVEL_DEFAULT, D2D1_HWND_RENDER_TARGET_PROPERTIES, D2D1_PRESENT_OPTIONS_NONE,
     D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT, D2D1_RENDER_TARGET_USAGE_NONE,
-    D2D1_ROUNDED_RECT, ID2D1HwndRenderTarget, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    ID2D1HwndRenderTarget, ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::Dwm::{DWMWINDOWATTRIBUTE, DwmSetWindowAttribute};
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -21,29 +21,64 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
-use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent, VIRTUAL_KEY, VK_DOWN, VK_ESCAPE,
+    VK_LEFT, VK_RETURN, VK_RIGHT, VK_SHIFT, VK_SPACE, VK_TAB, VK_UP,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetCursorPos,
     GetWindowLongPtrW, IDC_ARROW, IDC_HAND, IsWindow, LoadCursorW, RegisterClassExW, SW_SHOWNORMAL,
     SWP_NOZORDER, SetCursor, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    WM_KEYDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_PAINT, WM_SETCURSOR, WNDCLASSEXW,
-    WS_CAPTION, WS_EX_LEFT, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
+    WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_PAINT, WM_SETCURSOR,
+    WNDCLASSEXW, WS_CAPTION, WS_EX_LEFT, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU,
 };
 use windows::core::{BOOL, Interface, Result, w};
 
-use crate::graphics::Graphics;
-use crate::layout::{self, Rect};
+use crate::graphics::{self, Graphics};
+use crate::layout::{self, Rect, settings as geometry};
 use crate::offscreen::Offscreen;
-use crate::settings_model::{self, Effect, Field, Row, Section, Tool};
+use crate::settings_model::{self, Control, Effect, Field, Row, Tool};
 use crate::{
-    converter_window, excluded_apps_window, macros_window, mode_icon, persistence, startup, style,
+    converter_window, excluded_apps_window, icons, macros_window, mode_icon, persistence, startup,
+    style,
 };
-use oh_key_ipc::Settings;
+use oh_key_ipc::{Settings, SharedState};
 
+/// Something the pointer can land on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Hit {
+enum Target {
+    Mode(bool),
+    Dropdown(Field),
+    Chip(Field, usize),
+    Switch(Field),
+    Action(Tool),
+    PopupItem(Field, usize),
+}
+
+/// A stop of the Tab order.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Focus {
+    /// The pair of mode buttons, ringed on the active one.
+    Mode,
+    Row(Field),
+    Action(Tool),
+}
+
+/// The list opened from a dropdown, and which of its items is lit.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Popup {
     field: Field,
-    option: usize,
+    highlighted: usize,
+}
+
+/// Everything one paint depends on.
+struct View<'a> {
+    settings: &'a Settings,
+    vietnamese: bool,
+    hovered: Option<Target>,
+    /// Only set while the keyboard is driving, so a mouse click leaves no ring.
+    focus_ring: Option<Focus>,
+    popup: Option<Popup>,
 }
 
 /// Set while the window is open, so a second request brings it forward.
@@ -54,8 +89,13 @@ struct SettingsWindow {
     hwnd: HWND,
     target: ID2D1RenderTarget,
     settings: Settings,
+    /// Dropped with the window; None when the shared block could not be opened.
+    shared: Option<SharedState>,
     pointer: (f32, f32),
-    hits: Vec<(Hit, Rect)>,
+    hits: Vec<(Target, Rect)>,
+    focus: Option<Focus>,
+    focus_visible: bool,
+    popup: Option<Popup>,
 }
 
 fn open_window_handle() -> Option<HWND> {
@@ -68,11 +108,8 @@ fn open_window_handle() -> Option<HWND> {
 }
 
 fn window_height(settings: &Settings) -> f32 {
-    let [left, right] = settings_model::columns(settings);
-    layout::window_height(
-        &settings_model::rows_per_section(&left),
-        &settings_model::rows_per_section(&right),
-    )
+    let cards = settings_model::cards(settings);
+    geometry::frame(&settings_model::card_row_counts(&cards)).height
 }
 
 /// Opens the window, or brings the open one forward.
@@ -128,11 +165,11 @@ pub fn open() -> Result<()> {
         (work.bottom - work.top - (borders.bottom - borders.top)) as f32,
     );
     let height_dips = window_height(&settings);
-    let scale = layout::fitted_scale(dpi as f32 / 96.0, (layout::WIDTH, height_dips), room);
+    let scale = layout::fitted_scale(dpi as f32 / 96.0, (geometry::WIDTH, height_dips), room);
     let mut frame = RECT {
         left: 0,
         top: 0,
-        right: (layout::WIDTH * scale).round() as i32,
+        right: (geometry::WIDTH * scale).round() as i32,
         bottom: (height_dips * scale).round() as i32,
     };
     unsafe {
@@ -158,8 +195,12 @@ pub fn open() -> Result<()> {
         hwnd,
         target,
         settings,
+        shared: SharedState::open().ok(),
         pointer: (-1.0, -1.0),
         hits: Vec::new(),
+        focus: None,
+        focus_visible: false,
+        popup: None,
     });
     unsafe {
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(window) as isize);
@@ -170,7 +211,8 @@ pub fn open() -> Result<()> {
     Ok(())
 }
 
-/// Re-reads the settings into the open window, after something else changed them.
+/// Re-reads the settings into the open window, after something else changed them or the mode
+/// changed.
 pub fn refresh() {
     let Some(hwnd) = open_window_handle() else {
         return;
@@ -247,6 +289,28 @@ fn create_target(graphics: &Graphics, hwnd: HWND, dpi: f32) -> Result<ID2D1Rende
     target.cast()
 }
 
+/// Asks for a WM_MOUSELEAVE, so the hover state clears when the pointer leaves the window.
+fn track_mouse_leave(hwnd: HWND) {
+    let mut request = TRACKMOUSEEVENT {
+        cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    unsafe {
+        let _ = TrackMouseEvent(&mut request);
+    }
+}
+
+fn shift_is_down() -> bool {
+    let state = unsafe { GetKeyState(VK_SHIFT.0 as i32) };
+    state < 0
+}
+
+const HIT_TEST_CLIENT: isize = 1;
+/// Sent after `TrackMouseEvent(TME_LEAVE)`, when the pointer leaves the client area.
+const WM_MOUSELEAVE: u32 = 0x02A3;
+
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     message: u32,
@@ -272,7 +336,7 @@ unsafe extern "system" fn window_proc(
             }
             LRESULT(0)
         }
-        WM_SETCURSOR => {
+        WM_SETCURSOR if (lparam.0 & 0xFFFF) == HIT_TEST_CLIENT => {
             let shape = if window.hit_at(window.pointer).is_some() {
                 IDC_HAND
             } else {
@@ -285,33 +349,81 @@ unsafe extern "system" fn window_proc(
             unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
         }
         WM_MOUSEMOVE => {
-            window.pointer = window.to_dips(lparam);
+            track_mouse_leave(hwnd);
+            let point = window.to_dips(lparam);
+            window.move_pointer(point);
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            window.move_pointer((-1.0, -1.0));
+            LRESULT(0)
+        }
+        WM_KILLFOCUS => {
+            window.popup = None;
             window.paint();
             LRESULT(0)
         }
         WM_LBUTTONUP => {
             window.pointer = window.to_dips(lparam);
-            if let Some(hit) = window.hit_at(window.pointer) {
-                window.choose(hit);
-            }
+            window.click();
             window.paint();
             LRESULT(0)
         }
-        WM_KEYDOWN if wparam.0 as u16 == VK_ESCAPE.0 => {
-            unsafe {
-                let _ = DestroyWindow(hwnd);
+        WM_KEYDOWN => {
+            let key = VIRTUAL_KEY(wparam.0 as u16);
+            if key == VK_ESCAPE && window.popup.is_none() {
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
+                return LRESULT(0);
             }
+            window.key_down(key, shift_is_down());
+            window.paint();
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
     }
 }
 
-impl SettingsWindow {
-    fn graphics(&self) -> &Graphics {
-        &self.graphics
+/// The Tab order: the mode buttons, every row top to bottom, then the tool buttons.
+fn focus_order(settings: &Settings) -> Vec<Focus> {
+    let mut order = vec![Focus::Mode];
+    for row in settings_model::cards(settings).iter().flatten() {
+        order.push(Focus::Row(row.field));
     }
+    for action in settings_model::actions() {
+        order.push(Focus::Action(action.tool));
+    }
+    order
+}
 
+/// The stop after (or before) `current`, wrapping round; from nowhere, the first (or last).
+fn neighbour_focus(order: &[Focus], current: Option<Focus>, backward: bool) -> Focus {
+    let position = current.and_then(|focus| order.iter().position(|stop| *stop == focus));
+    let last = order.len() - 1;
+    let index = match (position, backward) {
+        (None, false) => 0,
+        (None, true) => last,
+        (Some(0), true) => last,
+        (Some(position), true) => position - 1,
+        (Some(position), false) if position == last => 0,
+        (Some(position), false) => position + 1,
+    };
+    order[index]
+}
+
+fn focus_of(target: Target) -> Option<Focus> {
+    match target {
+        Target::Mode(_) => Some(Focus::Mode),
+        Target::Dropdown(field) | Target::Chip(field, _) | Target::Switch(field) => {
+            Some(Focus::Row(field))
+        }
+        Target::Action(tool) => Some(Focus::Action(tool)),
+        Target::PopupItem(..) => None,
+    }
+}
+
+impl SettingsWindow {
     fn to_dips(&self, lparam: LPARAM) -> (f32, f32) {
         let pixel_x = (lparam.0 & 0xFFFF) as u16 as i16 as i32;
         let pixel_y = ((lparam.0 >> 16) & 0xFFFF) as u16 as i16 as i32;
@@ -321,20 +433,179 @@ impl SettingsWindow {
         layout::pixels_to_dips((pixel_x, pixel_y), (dpi_x, dpi_y))
     }
 
-    fn hit_at(&self, point: (f32, f32)) -> Option<Hit> {
-        layout::hit_test(&self.hits, point)
+    /// While a popup is open only its items can be hit; the popup's rectangles come first.
+    fn hit_at(&self, point: (f32, f32)) -> Option<Target> {
+        let hit = layout::hit_test(&self.hits, point)?;
+        let blocked = self.popup.is_some() && !matches!(hit, Target::PopupItem(..));
+        (!blocked).then_some(hit)
     }
 
-    /// Applies one click, saves, and publishes it to the hook.
-    fn choose(&mut self, hit: Hit) {
-        match settings_model::apply_choice(&mut self.settings, hit.field, hit.option) {
+    fn vietnamese(&self) -> bool {
+        self.shared
+            .as_ref()
+            .map_or(self.settings.start_vietnamese, SharedState::vietnamese)
+    }
+
+    fn row_control(&self, field: Field) -> Option<Control> {
+        settings_model::cards(&self.settings)
+            .into_iter()
+            .flatten()
+            .find(|row| row.field == field)
+            .map(|row| row.control)
+    }
+
+    /// Repaints only when the pointer changed what is lit.
+    fn move_pointer(&mut self, point: (f32, f32)) {
+        let before = self.hit_at(self.pointer);
+        self.pointer = point;
+        let after = self.hit_at(point);
+        let mut highlight_changed = false;
+        if let (Some(popup), Some(Target::PopupItem(_, item))) = (self.popup.as_mut(), after) {
+            highlight_changed = popup.highlighted != item;
+            popup.highlighted = item;
+        }
+        if before != after || highlight_changed {
+            self.paint();
+        }
+    }
+
+    fn click(&mut self) {
+        let hit = self.hit_at(self.pointer);
+        if let Some(popup) = self.popup.take() {
+            if let Some(Target::PopupItem(field, option)) = hit {
+                self.choose(field, option);
+                self.focus = Some(Focus::Row(popup.field));
+            }
+            return;
+        }
+        let Some(hit) = hit else {
+            return;
+        };
+        self.focus = focus_of(hit);
+        self.focus_visible = false;
+        match hit {
+            Target::Mode(vietnamese) => self.set_mode(vietnamese),
+            Target::Dropdown(field) => self.open_popup(field),
+            Target::Chip(field, option) => self.choose(field, option),
+            Target::Switch(field) => self.choose_next(field),
+            Target::Action(tool) => self.open_tool(tool),
+            Target::PopupItem(..) => {}
+        }
+    }
+
+    fn key_down(&mut self, key: VIRTUAL_KEY, shift: bool) {
+        if self.popup.is_some() {
+            self.popup_key(key);
+            return;
+        }
+        match key {
+            VK_TAB => self.move_focus(shift),
+            VK_SPACE | VK_RETURN => self.activate_focus(),
+            VK_LEFT | VK_UP => self.step_focus(false),
+            VK_RIGHT | VK_DOWN => self.step_focus(true),
+            _ => {}
+        }
+    }
+
+    fn popup_key(&mut self, key: VIRTUAL_KEY) {
+        let Some(popup) = self.popup else {
+            return;
+        };
+        let item_count = self
+            .row_control(popup.field)
+            .map_or(0, |control| control.option_count());
+        match key {
+            VK_UP => self.set_highlight(popup.highlighted.saturating_sub(1)),
+            VK_DOWN => {
+                self.set_highlight((popup.highlighted + 1).min(item_count.saturating_sub(1)))
+            }
+            VK_RETURN | VK_SPACE => {
+                self.popup = None;
+                self.choose(popup.field, popup.highlighted);
+            }
+            VK_ESCAPE | VK_TAB => self.popup = None,
+            _ => {}
+        }
+    }
+
+    fn set_highlight(&mut self, highlighted: usize) {
+        if let Some(popup) = self.popup.as_mut() {
+            popup.highlighted = highlighted;
+        }
+    }
+
+    fn move_focus(&mut self, backward: bool) {
+        let order = focus_order(&self.settings);
+        self.focus = Some(neighbour_focus(&order, self.focus, backward));
+        self.focus_visible = true;
+    }
+
+    fn activate_focus(&mut self) {
+        self.focus_visible = true;
+        match self.focus {
+            Some(Focus::Mode) => self.set_mode(!self.vietnamese()),
+            Some(Focus::Row(field)) => self.activate_row(field),
+            Some(Focus::Action(tool)) => self.open_tool(tool),
+            None => {}
+        }
+    }
+
+    fn activate_row(&mut self, field: Field) {
+        if let Some(Control::Dropdown { .. }) = self.row_control(field) {
+            self.open_popup(field);
+        } else {
+            self.choose_next(field);
+        }
+    }
+
+    /// An arrow key on the focused control: the other mode, or the neighbouring option.
+    fn step_focus(&mut self, forward: bool) {
+        self.focus_visible = true;
+        match self.focus {
+            Some(Focus::Mode) => self.set_mode(!forward),
+            Some(Focus::Row(field)) => {
+                let stepped = self
+                    .row_control(field)
+                    .and_then(|control| control.stepped_option(forward));
+                if let Some(option) = stepped {
+                    self.choose(field, option);
+                }
+            }
+            Some(Focus::Action(_)) | None => {}
+        }
+    }
+
+    fn open_popup(&mut self, field: Field) {
+        let Some(control) = self.row_control(field) else {
+            return;
+        };
+        self.popup = Some(Popup {
+            field,
+            highlighted: control.selected(),
+        });
+    }
+
+    fn set_mode(&mut self, vietnamese: bool) {
+        if let Some(shared) = &self.shared {
+            shared.set_vietnamese(vietnamese);
+        }
+    }
+
+    fn choose_next(&mut self, field: Field) {
+        if let Some(control) = self.row_control(field) {
+            self.choose(field, control.next_option());
+        }
+    }
+
+    /// Applies one choice, saves, and publishes it to the hook.
+    fn choose(&mut self, field: Field, option: usize) {
+        match settings_model::apply_choice(&mut self.settings, field, option) {
             Effect::Nothing => {}
             Effect::Save => persistence::save_and_publish(&self.settings),
             Effect::SaveAndApplyStartup => {
                 persistence::save_and_publish(&self.settings);
                 startup::set_start_at_sign_in(self.settings.start_at_sign_in);
             }
-            Effect::Open(tool) => self.open_tool(tool),
         }
     }
 
@@ -348,13 +619,23 @@ impl SettingsWindow {
     }
 
     fn paint(&mut self) {
-        let target = self.target.clone();
-        let hovered = self.hit_at(self.pointer);
-        self.hits = draw(&target, self.graphics(), &self.settings, hovered);
+        let view = View {
+            settings: &self.settings,
+            vietnamese: self.vietnamese(),
+            hovered: self.hit_at(self.pointer),
+            focus_ring: self.focus.filter(|_| self.focus_visible),
+            popup: self.popup,
+        };
+        let hits = draw(&self.target, &self.graphics, &view);
+        self.hits = hits;
     }
 }
 
 struct Brushes {
+    ink: ID2D1SolidColorBrush,
+    panel: ID2D1SolidColorBrush,
+    raised: ID2D1SolidColorBrush,
+    rule: ID2D1SolidColorBrush,
     text: ID2D1SolidColorBrush,
     dim: ID2D1SolidColorBrush,
     accent: ID2D1SolidColorBrush,
@@ -365,6 +646,10 @@ struct Brushes {
 fn create_brushes(target: &ID2D1RenderTarget) -> Option<Brushes> {
     let brush = |color: D2D1_COLOR_F| unsafe { target.CreateSolidColorBrush(&color, None) }.ok();
     Some(Brushes {
+        ink: brush(style::INK)?,
+        panel: brush(style::INK_PANEL)?,
+        raised: brush(style::RAISED)?,
+        rule: brush(style::RULE)?,
         text: brush(style::TEXT)?,
         dim: brush(style::TEXT_DIM)?,
         accent: brush(style::ACCENT)?,
@@ -373,13 +658,8 @@ fn create_brushes(target: &ID2D1RenderTarget) -> Option<Brushes> {
     })
 }
 
-/// Draws the whole window and returns where every choice button is, for hit testing.
-fn draw(
-    target: &ID2D1RenderTarget,
-    graphics: &Graphics,
-    settings: &Settings,
-    hovered: Option<Hit>,
-) -> Vec<(Hit, Rect)> {
+/// Draws the whole window and returns where everything clickable is, popup first.
+fn draw(target: &ID2D1RenderTarget, graphics: &Graphics, view: &View) -> Vec<(Target, Rect)> {
     let Some(brushes) = create_brushes(target) else {
         return Vec::new();
     };
@@ -387,191 +667,448 @@ fn draw(
         target.BeginDraw();
         target.Clear(Some(&style::INK));
     }
-    let spark = Rect {
-        left: layout::PADDING - 8.0,
-        top: 18.0,
-        right: layout::PADDING + 22.0,
-        bottom: 54.0,
-    };
-    graphics.draw_spark(target, spark, &brushes.accent);
-    graphics.draw_label(
+    let cards = settings_model::cards(view.settings);
+    let frame = geometry::frame(&settings_model::card_row_counts(&cards));
+    let mut scene = Scene {
         target,
-        "bảng điều khiển",
-        layout::PADDING + 28.0,
-        27.0,
-        400.0,
-        &brushes.text,
-    );
-
-    let mut hits = Vec::new();
-    for (column_index, sections) in settings_model::columns(settings).iter().enumerate() {
-        draw_column(
-            target,
-            graphics,
-            &brushes,
-            sections,
-            column_index,
-            hovered,
-            &mut hits,
-        );
+        graphics,
+        brushes: &brushes,
+        view,
+        hits: Vec::new(),
+        focus_shapes: Vec::new(),
+    };
+    scene.draw_title_bar();
+    scene.draw_mode_buttons(&frame);
+    for (rows, card) in cards.iter().zip(&frame.cards) {
+        scene.draw_card(rows, *card);
     }
+    scene.draw_actions(&frame);
+    scene.draw_focus_ring();
+    let mut hits = scene.draw_popup(&cards, frame.height);
+    hits.append(&mut scene.hits);
     unsafe {
         let _ = target.EndDraw(None, None);
     }
     hits
 }
 
-fn row_buttons(graphics: &Graphics, row: &Row, column_index: usize, top: f32) -> Vec<(Hit, Rect)> {
-    let right_edge = layout::column_left(column_index) + layout::column_width();
-    let widths: Vec<f32> = row
-        .options
-        .iter()
-        .map(|option| graphics.measure(option).0)
-        .collect();
-    layout::button_rects(top, right_edge, &widths)
-        .into_iter()
-        .enumerate()
-        .map(|(option, rect)| {
-            (
-                Hit {
-                    field: row.field,
-                    option,
-                },
-                rect,
-            )
-        })
-        .collect()
+/// The drawing state of one paint: where to draw, and what has been placed so far.
+struct Scene<'a> {
+    target: &'a ID2D1RenderTarget,
+    graphics: &'a Graphics,
+    brushes: &'a Brushes,
+    view: &'a View<'a>,
+    hits: Vec<(Target, Rect)>,
+    /// Each focus stop's outline and corner radius, for the ring and the popup's anchor.
+    focus_shapes: Vec<(Focus, Rect, f32)>,
 }
 
-fn draw_column(
-    target: &ID2D1RenderTarget,
-    graphics: &Graphics,
-    brushes: &Brushes,
-    sections: &[Section],
-    column_index: usize,
-    hovered: Option<Hit>,
-    hits: &mut Vec<(Hit, Rect)>,
-) {
-    let left = layout::column_left(column_index);
-    let right = left + layout::column_width();
-    let mut top = layout::TITLE_HEIGHT;
-    for section in sections {
-        let icon_area = Rect {
-            left: left - 2.0,
-            top: top + 10.0,
-            right: left + 20.0,
-            bottom: top + 34.0,
-        };
-        graphics.draw_icon(target, section.icon, icon_area, &brushes.accent);
-        graphics.draw_label(
-            target,
-            section.title,
-            left + layout::ICON_SLOT,
-            top + 14.0,
-            right,
-            &brushes.accent,
-        );
-        top += layout::SECTION_HEIGHT;
-        for row in &section.rows {
-            draw_row(
-                target,
-                graphics,
-                brushes,
-                row,
-                column_index,
-                top,
-                hovered,
-                hits,
-            );
-            top += layout::ROW_HEIGHT;
-        }
-        top += layout::SECTION_GAP;
+impl Scene<'_> {
+    fn fill(&self, rect: Rect, radius: f32, brush: &ID2D1SolidColorBrush) {
+        graphics::fill_rounded(self.target, rect, radius, brush);
     }
-}
 
-#[allow(clippy::too_many_arguments)]
-fn draw_row(
-    target: &ID2D1RenderTarget,
-    graphics: &Graphics,
-    brushes: &Brushes,
-    row: &Row,
-    column_index: usize,
-    top: f32,
-    hovered: Option<Hit>,
-    hits: &mut Vec<(Hit, Rect)>,
-) {
-    let left = layout::column_left(column_index);
-    let (_, text_height) = graphics.measure(row.label);
-    let text_top = top + (layout::ROW_HEIGHT - text_height) / 2.0;
-    let icon_area = Rect {
-        left: left - 2.0,
-        top,
-        right: left + 20.0,
-        bottom: top + layout::ROW_HEIGHT,
-    };
-    graphics.draw_icon(target, row.icon, icon_area, &brushes.dim);
-    graphics.draw_label(
-        target,
-        row.label,
-        left + layout::ICON_SLOT,
-        text_top,
-        left + layout::LABEL_WIDTH,
-        &brushes.text,
-    );
+    fn outline(&self, rect: Rect, radius: f32, brush: &ID2D1SolidColorBrush) {
+        graphics::outline_rounded(self.target, rect, radius, style::OUTLINE_WIDTH, brush);
+    }
 
-    let buttons = row_buttons(graphics, row, column_index, top);
-    let text_right = buttons
-        .first()
-        .map_or(left + layout::column_width(), |(_, button)| button.left);
-    for (button_index, (hit, button)) in buttons.iter().enumerate() {
-        let selected = row.selected == Some(button_index);
-        if selected || hovered == Some(*hit) {
-            let fill = if selected {
-                &brushes.accent_soft
+    /// `text` starting at `left`, vertically centred in `top..bottom`.
+    fn label_centred(
+        &self,
+        text: &str,
+        left: f32,
+        right: f32,
+        (top, bottom): (f32, f32),
+        brush: &ID2D1SolidColorBrush,
+    ) {
+        let (_, text_height) = self.graphics.measure(text);
+        let text_top = top + (bottom - top - text_height) / 2.0;
+        self.graphics
+            .draw_label(self.target, text, left, text_top, right, brush);
+    }
+
+    fn is_hovered(&self, target: Target) -> bool {
+        self.view.hovered == Some(target)
+    }
+
+    fn draw_title_bar(&self) {
+        let spark = Rect {
+            left: geometry::MARGIN - 8.0,
+            top: 0.0,
+            right: geometry::MARGIN + 22.0,
+            bottom: geometry::TITLE_BAR_HEIGHT,
+        };
+        self.graphics
+            .draw_spark(self.target, spark, &self.brushes.accent);
+        let vertical = (0.0, geometry::TITLE_BAR_HEIGHT);
+        let right_edge = geometry::WIDTH - geometry::MARGIN;
+        self.label_centred(
+            "oh-key",
+            geometry::MARGIN + 28.0,
+            right_edge,
+            vertical,
+            &self.brushes.text,
+        );
+        let version = format!("v{}", settings_model::VERSION);
+        let version_width = self.graphics.measure(&version).0;
+        self.label_centred(
+            &version,
+            right_edge - version_width,
+            geometry::WIDTH,
+            vertical,
+            &self.brushes.dim,
+        );
+    }
+
+    fn draw_mode_buttons(&mut self, frame: &geometry::Frame) {
+        let buttons = settings_model::mode_buttons(self.view.vietnamese);
+        for (button, rect) in buttons.iter().zip(frame.mode_buttons) {
+            let hit = Target::Mode(button.vietnamese);
+            let brushes = self.brushes;
+            if button.active {
+                self.fill(rect, style::CARD_RADIUS, &brushes.accent_soft);
+                self.outline(rect, style::CARD_RADIUS, &brushes.accent);
+                self.focus_shapes
+                    .push((Focus::Mode, rect, style::CARD_RADIUS));
             } else {
-                &brushes.hover
+                if self.is_hovered(hit) {
+                    self.fill(rect, style::CARD_RADIUS, &brushes.hover);
+                }
+                self.outline(rect, style::CARD_RADIUS, &brushes.rule);
+            }
+            let tile_size = 28.0;
+            let tile_top = rect.top + (rect.bottom - rect.top - tile_size) / 2.0;
+            let tile = Rect {
+                left: rect.left + geometry::ROW_INSET,
+                top: tile_top,
+                right: rect.left + geometry::ROW_INSET + tile_size,
+                bottom: tile_top + tile_size,
             };
-            let shape = D2D1_ROUNDED_RECT {
-                rect: (*button).into(),
-                radiusX: style::BUTTON_RADIUS,
-                radiusY: style::BUTTON_RADIUS,
+            self.fill(tile, style::TILE_RADIUS, &brushes.ink);
+            self.outline(tile, style::TILE_RADIUS, &brushes.rule);
+            let tone = if button.active {
+                &brushes.accent
+            } else {
+                &brushes.text
             };
-            unsafe { target.FillRoundedRectangle(&shape, fill) };
+            self.graphics
+                .draw_centred_mono(self.target, button.tile, 16.0, tile, tone);
+            self.label_centred(
+                button.label,
+                tile.right + 10.0,
+                rect.right - 8.0,
+                (rect.top, rect.bottom),
+                tone,
+            );
+            self.hits.push((hit, rect));
         }
-        let brush = if selected {
+    }
+
+    fn draw_card(&mut self, rows: &[Row], card: Rect) {
+        self.fill(card, style::CARD_RADIUS, &self.brushes.panel);
+        for (index, row) in rows.iter().enumerate() {
+            let row_rect = geometry::row_rect(card, index);
+            self.draw_row(row, row_rect);
+        }
+    }
+
+    fn draw_row(&mut self, row: &Row, row_rect: Rect) {
+        let label_right = row_rect.right - geometry::ROW_INSET - geometry::DROPDOWN_WIDTH;
+        self.label_centred(
+            row.label,
+            row_rect.left + geometry::ROW_INSET,
+            label_right,
+            (row_rect.top, row_rect.bottom),
+            &self.brushes.text,
+        );
+        match &row.control {
+            Control::Dropdown { options, selected } => {
+                self.draw_dropdown(row.field, &options[*selected], row_rect);
+            }
+            Control::Chips { options, selected } => {
+                self.draw_chips(row.field, options, *selected, row_rect);
+            }
+            Control::Switch { on } => self.draw_switch(row.field, *on, row_rect),
+        }
+    }
+
+    fn draw_dropdown(&mut self, field: Field, value: &str, row_rect: Rect) {
+        let rect = geometry::dropdown_rect(row_rect);
+        let brushes = self.brushes;
+        let is_open = self.view.popup.is_some_and(|popup| popup.field == field);
+        self.fill(rect, style::CONTROL_RADIUS, &brushes.ink);
+        if self.is_hovered(Target::Dropdown(field)) {
+            self.fill(rect, style::CONTROL_RADIUS, &brushes.hover);
+        }
+        let outline = if is_open {
             &brushes.accent
         } else {
-            &brushes.text
+            &brushes.rule
         };
-        let text_left = button.left + layout::BUTTON_PADDING / 2.0;
-        graphics.draw_label(
-            target,
-            &row.options[button_index],
-            text_left,
-            text_top,
-            button.right,
-            brush,
+        self.outline(rect, style::CONTROL_RADIUS, outline);
+        let vertical = (rect.top, rect.bottom);
+        self.label_centred(
+            value,
+            rect.left + 12.0,
+            rect.right - 32.0,
+            vertical,
+            &brushes.text,
         );
+        let chevron = Rect {
+            left: rect.right - 30.0,
+            top: rect.top,
+            right: rect.right - 10.0,
+            bottom: rect.bottom,
+        };
+        self.graphics
+            .draw_icon(self.target, icons::CHEVRON_DOWN, chevron, &brushes.dim);
+        self.hits.push((Target::Dropdown(field), rect));
+        self.focus_shapes
+            .push((Focus::Row(field), rect, style::CONTROL_RADIUS));
     }
-    hits.extend(buttons);
 
-    if let Some(trailing) = &row.trailing {
-        graphics.draw_label(
-            target,
-            trailing,
-            left + layout::LABEL_WIDTH,
-            text_top,
-            text_right - 8.0,
-            &brushes.dim,
+    fn draw_chips(&mut self, field: Field, options: &[String], selected: usize, row_rect: Rect) {
+        let widths: Vec<f32> = options
+            .iter()
+            .map(|option| self.graphics.measure(option).0)
+            .collect();
+        let rects = geometry::chip_rects(row_rect, &widths);
+        let brushes = self.brushes;
+        for (index, (option, rect)) in options.iter().zip(&rects).enumerate() {
+            let hit = Target::Chip(field, index);
+            let tone = if index == selected {
+                self.fill(*rect, style::CONTROL_RADIUS, &brushes.accent_soft);
+                self.outline(*rect, style::CONTROL_RADIUS, &brushes.accent);
+                &brushes.accent
+            } else {
+                if self.is_hovered(hit) {
+                    self.fill(*rect, style::CONTROL_RADIUS, &brushes.hover);
+                }
+                self.outline(*rect, style::CONTROL_RADIUS, &brushes.rule);
+                &brushes.text
+            };
+            self.label_centred(
+                option,
+                rect.left + geometry::CHIP_TEXT_PADDING,
+                rect.right,
+                (rect.top, rect.bottom),
+                tone,
+            );
+            self.hits.push((hit, *rect));
+        }
+        if let (Some(first), Some(last)) = (rects.first(), rects.last()) {
+            let group = geometry::union(*first, *last);
+            self.focus_shapes
+                .push((Focus::Row(field), group, style::CONTROL_RADIUS));
+        }
+    }
+
+    fn draw_switch(&mut self, field: Field, on: bool, row_rect: Rect) {
+        let rect = geometry::switch_rect(row_rect);
+        let brushes = self.brushes;
+        let radius = geometry::SWITCH_HEIGHT / 2.0;
+        let track = if on { &brushes.accent } else { &brushes.rule };
+        self.fill(rect, radius, track);
+        let hit = Target::Switch(field);
+        if self.is_hovered(hit) {
+            self.fill(rect, radius, &brushes.hover);
+        }
+        let knob_inset = 3.0;
+        let knob_radius = radius - knob_inset;
+        let knob_x = if on {
+            rect.right - knob_inset - knob_radius
+        } else {
+            rect.left + knob_inset + knob_radius
+        };
+        let knob_brush = if on { &brushes.ink } else { &brushes.dim };
+        let knob_y = (rect.top + rect.bottom) / 2.0;
+        let knob = Rect {
+            left: knob_x - knob_radius,
+            top: knob_y - knob_radius,
+            right: knob_x + knob_radius,
+            bottom: knob_y + knob_radius,
+        };
+        self.fill(knob, knob_radius, knob_brush);
+        // The whole row switches it, not only the small track.
+        self.hits.push((hit, row_rect));
+        self.focus_shapes.push((Focus::Row(field), rect, radius));
+    }
+
+    fn draw_actions(&mut self, frame: &geometry::Frame) {
+        let icon_size = 16.0;
+        let icon_gap = 8.0;
+        let brushes = self.brushes;
+        for (action, rect) in settings_model::actions().iter().zip(frame.actions) {
+            let hit = Target::Action(action.tool);
+            self.fill(rect, style::CONTROL_RADIUS, &brushes.raised);
+            if self.is_hovered(hit) {
+                self.fill(rect, style::CONTROL_RADIUS, &brushes.hover);
+            }
+            self.outline(rect, style::CONTROL_RADIUS, &brushes.rule);
+            let text_width = self.graphics.measure(action.label).0;
+            let group_width = icon_size + icon_gap + text_width;
+            let left = rect.left + (rect.right - rect.left - group_width) / 2.0;
+            let icon_area = Rect {
+                left,
+                top: rect.top,
+                right: left + icon_size,
+                bottom: rect.bottom,
+            };
+            self.graphics
+                .draw_icon(self.target, action.icon, icon_area, &brushes.text);
+            self.label_centred(
+                action.label,
+                left + icon_size + icon_gap,
+                rect.right,
+                (rect.top, rect.bottom),
+                &brushes.text,
+            );
+            self.hits.push((hit, rect));
+            self.focus_shapes
+                .push((Focus::Action(action.tool), rect, style::CONTROL_RADIUS));
+        }
+    }
+
+    fn draw_focus_ring(&self) {
+        let Some(focus) = self.view.focus_ring else {
+            return;
+        };
+        let Some((_, rect, radius)) = self.focus_shapes.iter().find(|(stop, ..)| *stop == focus)
+        else {
+            return;
+        };
+        let width = style::FOCUS_RING_WIDTH;
+        let offset = style::FOCUS_RING_GAP + width;
+        graphics::outline_rounded(
+            self.target,
+            geometry::grown(*rect, offset),
+            radius + offset,
+            width,
+            &self.brushes.accent,
         );
     }
+
+    /// Draws the open dropdown's list over everything and returns its items' hit rectangles.
+    fn draw_popup(&self, cards: &[Vec<Row>], window_height: f32) -> Vec<(Target, Rect)> {
+        let Some(popup) = self.view.popup else {
+            return Vec::new();
+        };
+        let control = cards
+            .iter()
+            .flatten()
+            .find(|row| row.field == popup.field)
+            .map(|row| &row.control);
+        let anchor = self
+            .focus_shapes
+            .iter()
+            .find(|(stop, ..)| *stop == Focus::Row(popup.field))
+            .map(|(_, rect, _)| *rect);
+        let (Some(Control::Dropdown { options, selected }), Some(anchor)) = (control, anchor)
+        else {
+            return Vec::new();
+        };
+        let brushes = self.brushes;
+        let list = geometry::popup_rect(anchor, options.len(), window_height);
+        self.fill(list, style::CONTROL_RADIUS + 1.0, &brushes.raised);
+        self.outline(list, style::CONTROL_RADIUS + 1.0, &brushes.rule);
+        let mut hits = Vec::with_capacity(options.len());
+        let item_rects = geometry::popup_item_rects(list, options.len());
+        for (index, (option, item)) in options.iter().zip(item_rects).enumerate() {
+            if index == popup.highlighted {
+                self.fill(item, style::CONTROL_RADIUS - 2.0, &brushes.hover);
+            }
+            let tone = if index == *selected {
+                &brushes.accent
+            } else {
+                &brushes.text
+            };
+            self.label_centred(
+                option,
+                item.left + 8.0,
+                item.right - 8.0,
+                (item.top, item.bottom),
+                tone,
+            );
+            hits.push((Target::PopupItem(popup.field, index), item));
+        }
+        hits
+    }
+}
+
+/// Which state of the window `--render-png` draws.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Preview {
+    Plain,
+    /// The input method list open with its second item lit.
+    Dropdown,
+    /// The keyboard ring on a switch, and the English button hovered.
+    Focus,
 }
 
 /// `oh-key.exe --render-png settings out.png`: the window drawn into a file.
-pub fn render_png(graphics: &Graphics, settings: &Settings, path: &Path) -> Result<()> {
-    let width = layout::WIDTH as u32;
+pub fn render_png(
+    graphics: &Graphics,
+    settings: &Settings,
+    preview: Preview,
+    path: &Path,
+) -> Result<()> {
+    let width = geometry::WIDTH as u32;
     let height = window_height(settings).round() as u32;
     let offscreen = Offscreen::new(graphics, width, height)?;
-    draw(&offscreen.target, graphics, settings, None);
+    let view = View {
+        settings,
+        vietnamese: settings.start_vietnamese,
+        hovered: (preview == Preview::Focus).then_some(Target::Mode(false)),
+        focus_ring: (preview == Preview::Focus).then_some(Focus::Row(Field::SpellCheck)),
+        popup: (preview == Preview::Dropdown).then_some(Popup {
+            field: Field::InputMethod,
+            highlighted: 1,
+        }),
+    };
+    draw(&offscreen.target, graphics, &view);
     offscreen.save_png(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tab_order_visits_the_modes_every_row_then_the_tools() {
+        let order = focus_order(&Settings::default());
+        assert_eq!(order.len(), 1 + 9 + 3);
+        assert_eq!(order[0], Focus::Mode);
+        assert_eq!(order[1], Focus::Row(Field::InputMethod));
+        assert_eq!(order[9], Focus::Row(Field::StartAtSignIn));
+        assert_eq!(order[10], Focus::Action(Tool::Macros));
+        assert_eq!(order[12], Focus::Action(Tool::Converter));
+    }
+
+    #[test]
+    fn tab_moves_forward_and_wraps_to_the_start() {
+        let order = focus_order(&Settings::default());
+        let last = *order.last().unwrap();
+        assert_eq!(neighbour_focus(&order, None, false), order[0]);
+        assert_eq!(neighbour_focus(&order, Some(order[0]), false), order[1]);
+        assert_eq!(neighbour_focus(&order, Some(last), false), order[0]);
+    }
+
+    #[test]
+    fn shift_tab_moves_back_and_wraps_to_the_end() {
+        let order = focus_order(&Settings::default());
+        let last = *order.last().unwrap();
+        assert_eq!(neighbour_focus(&order, None, true), last);
+        assert_eq!(neighbour_focus(&order, Some(order[0]), true), last);
+        assert_eq!(neighbour_focus(&order, Some(order[2]), true), order[1]);
+    }
+
+    #[test]
+    fn a_click_on_a_row_focuses_that_row_and_a_popup_item_focuses_nothing() {
+        assert_eq!(
+            focus_of(Target::Chip(Field::ToneStyle, 1)),
+            Some(Focus::Row(Field::ToneStyle))
+        );
+        assert_eq!(focus_of(Target::Mode(false)), Some(Focus::Mode));
+        assert_eq!(focus_of(Target::PopupItem(Field::InputMethod, 0)), None);
+    }
 }

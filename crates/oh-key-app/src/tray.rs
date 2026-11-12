@@ -227,6 +227,7 @@ impl Tray {
         if counter != self.shown_mode_counter {
             self.shown_mode_counter = counter;
             self.update_icon(hwnd);
+            settings_window::refresh();
         }
     }
 

@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
 use windows::Win32::Graphics::Direct2D::{
     D2D1_DRAW_TEXT_OPTIONS_CLIP, D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED,
-    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    D2D1_ROUNDED_RECT, D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, ID2D1SolidColorBrush,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
@@ -35,6 +35,43 @@ impl From<Rect> for D2D_RECT_F {
             bottom: rect.bottom,
         }
     }
+}
+
+pub fn fill_rounded(
+    target: &ID2D1RenderTarget,
+    rect: Rect,
+    radius: f32,
+    brush: &ID2D1SolidColorBrush,
+) {
+    let shape = D2D1_ROUNDED_RECT {
+        rect: rect.into(),
+        radiusX: radius,
+        radiusY: radius,
+    };
+    unsafe { target.FillRoundedRectangle(&shape, brush) };
+}
+
+/// A rounded outline drawn inside `rect`, so its outer edge is `rect`'s.
+pub fn outline_rounded(
+    target: &ID2D1RenderTarget,
+    rect: Rect,
+    radius: f32,
+    width: f32,
+    brush: &ID2D1SolidColorBrush,
+) {
+    let inset = width / 2.0;
+    let shape = D2D1_ROUNDED_RECT {
+        rect: Rect {
+            left: rect.left + inset,
+            top: rect.top + inset,
+            right: rect.right - inset,
+            bottom: rect.bottom - inset,
+        }
+        .into(),
+        radiusX: radius - inset,
+        radiusY: radius - inset,
+    };
+    unsafe { target.DrawRoundedRectangle(&shape, brush, width, None) };
 }
 
 /// How many Graphics are alive.

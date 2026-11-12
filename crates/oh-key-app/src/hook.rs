@@ -29,9 +29,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-    HHOOK, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetTimer,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP,
-    WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
+    HHOOK, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
+    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT,
+    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
 };
 use windows::core::{Owned, PWSTR};
 
@@ -60,7 +60,6 @@ const LAST_FUNCTION_KEY: u32 = 0x87;
 /// Stamped on every key the hook sends, so it can tell its own output from anyone else's.
 pub const OWN_OUTPUT_MARKER: usize = 0x6F68_6B79;
 const LLKHF_INJECTED: u32 = 0x10;
-const REFRESH_MILLISECONDS: u32 = 50;
 
 // ---------------------------------------------------------------------------------------
 // Pure part
@@ -366,11 +365,150 @@ pub fn hook_is_active(vietnamese: bool, foreground_exe: &str, excluded_apps: &[S
     vietnamese && !foreground_exe.is_empty() && !excluded
 }
 
+/// Where the key flow sends what it types: `SendInput` in the hook, a simulated field in tests.
+pub trait OutputSink {
+    fn send_edit(&mut self, edit: &TextEdit);
+    fn cancel_menu_activation(&mut self);
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyOutcome {
+    /// The key must not reach the application.
+    pub swallow: bool,
+    /// The Vietnamese/English mode flipped during this event.
+    pub toggled: bool,
+}
+
+/// Everything the hook decides for one key event, with the operating system taken out: the
+/// chord tracking, the hotkey, whether the hook is active, the typing session and which key to
+/// swallow. `HookState` and the headless tests both drive this one type.
+pub struct KeyFlow {
+    pub session: Session,
+    chord: ToggleChordTracker,
+    toggle_hotkey: ToggleHotkey,
+    vietnamese: bool,
+    excluded_apps: Vec<String>,
+    foreground_exe: String,
+    active: bool,
+    /// The key whose press was swallowed, so its release is swallowed too.
+    swallowed_key: Option<u32>,
+}
+
+impl KeyFlow {
+    pub fn new(config: Config, toggle_hotkey: ToggleHotkey) -> Self {
+        KeyFlow {
+            session: Session::new(config),
+            chord: ToggleChordTracker::default(),
+            toggle_hotkey,
+            vietnamese: false,
+            excluded_apps: Vec::new(),
+            foreground_exe: String::new(),
+            active: false,
+            swallowed_key: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn is_vietnamese(&self) -> bool {
+        self.vietnamese
+    }
+
+    pub fn set_mode_and_apps(
+        &mut self,
+        vietnamese: bool,
+        excluded_apps: Vec<String>,
+        toggle_hotkey: ToggleHotkey,
+    ) {
+        self.vietnamese = vietnamese;
+        self.excluded_apps = excluded_apps;
+        self.toggle_hotkey = toggle_hotkey;
+        self.refresh_active();
+    }
+
+    pub fn set_foreground_exe(&mut self, foreground_exe: String) {
+        self.foreground_exe = foreground_exe;
+        self.refresh_active();
+    }
+
+    fn refresh_active(&mut self) {
+        let active = hook_is_active(self.vietnamese, &self.foreground_exe, &self.excluded_apps);
+        if active != self.active {
+            self.active = active;
+            self.session.reset();
+        }
+    }
+
+    /// The foreground window changed: drop the word, the chord and the pending release.
+    pub fn deactivate(&mut self) {
+        self.active = false;
+        self.swallowed_key = None;
+        self.chord = ToggleChordTracker::default();
+        self.session.reset();
+    }
+
+    fn toggle_mode(&mut self) {
+        self.vietnamese = !self.vietnamese;
+        self.refresh_active();
+    }
+
+    /// The Ctrl+Shift chord completes on release; a swallowed key's release is swallowed too.
+    pub fn key_up(&mut self, virtual_key: u32) -> KeyOutcome {
+        let swallow = self.swallowed_key.take() == Some(virtual_key);
+        let completed = self.chord.key_up(virtual_key);
+        let toggled = completed && self.toggle_hotkey == ToggleHotkey::CtrlShift;
+        if toggled {
+            self.toggle_mode();
+        }
+        KeyOutcome { swallow, toggled }
+    }
+
+    /// `read_press` runs only when the hook is active, because reading the key state is costly.
+    pub fn key_down(
+        &mut self,
+        virtual_key: u32,
+        alt_held: bool,
+        ctrl_held: bool,
+        read_press: impl FnOnce() -> KeyPress,
+        sink: &mut impl OutputSink,
+    ) -> KeyOutcome {
+        self.chord.key_down(virtual_key);
+        if is_alt_z_press(self.toggle_hotkey, virtual_key, alt_held, ctrl_held) {
+            self.toggle_mode();
+            self.swallowed_key = Some(virtual_key);
+            sink.cancel_menu_activation();
+            return KeyOutcome {
+                swallow: true,
+                toggled: true,
+            };
+        }
+        if !self.active {
+            return KeyOutcome::default();
+        }
+        let press = read_press();
+        let swallow = match self.session.handle(classify_key(&press)) {
+            Verdict::PassThrough => false,
+            Verdict::EditThenPass(edit) => {
+                sink.send_edit(&edit);
+                false
+            }
+            Verdict::Swallow(edit) => {
+                sink.send_edit(&edit);
+                self.swallowed_key = Some(virtual_key);
+                true
+            }
+        };
+        KeyOutcome {
+            swallow,
+            toggled: false,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------
 // Windows glue
 // ---------------------------------------------------------------------------------------
 
-/// What the hook thread asks the app for every few milliseconds.
+/// What the hook thread asks the app for, at the start of a key event.
 pub struct HookInputs {
     /// Lower case executable names.
     pub excluded_apps: Vec<String>,
@@ -381,7 +519,10 @@ pub struct HookInputs {
     pub macros: Option<Vec<(String, String)>>,
 }
 
-pub type InputsProvider = Box<dyn FnMut() -> HookInputs + Send>;
+/// Called at the start of every key event, so it must be cheap when nothing changed: it returns
+/// `None` then, and the full inputs only after the settings or the mode changed. Nothing runs
+/// between keys, so an idle hook costs no wake-ups. The first call must return `Some`.
+pub type InputsProvider = Box<dyn FnMut() -> Option<HookInputs> + Send>;
 
 /// Flips the global Vietnamese/English mode when the hotkey is pressed.
 pub type ToggleAction = Box<dyn FnMut() + Send>;
@@ -393,26 +534,86 @@ pub struct HookOptions {
     pub accept_foreign_injected_keys: bool,
 }
 
+type MacroList = Vec<(String, String)>;
+
 /// The app's source: published settings, the mode in the shared state and the macro file.
+/// The generation counter (settings) and the mode counter are two atomic loads, so the common
+/// key event reads nothing else. The macro file is read on a short-lived thread, never inside
+/// the key callback: Windows drops a low-level hook whose callback runs too long. The macros
+/// reach the hook with the first key after the read finishes.
 pub fn app_inputs_provider(shared: SharedState) -> InputsProvider {
+    let mut seen_stamp = None;
     let mut seen_generation = None;
-    let mut settings = Settings::default();
+    let mut settings: Option<Settings> = None;
+    let mut pending_macros: Option<mpsc::Receiver<MacroList>> = None;
     Box::new(move || {
+        let mut macros = take_finished_macros(&mut pending_macros);
         let generation = shared.generation();
-        let mut macros = None;
+        let stamp = (generation, shared.mode_counter());
+        if seen_stamp == Some(stamp) && macros.is_none() {
+            return None;
+        }
+        seen_stamp = Some(stamp);
         if seen_generation != Some(generation) {
-            seen_generation = Some(generation);
-            settings = shared.read_settings().unwrap_or_else(load_settings);
-            macros = Some(read_macros(settings.engine.macro_enabled));
+            match shared.read_settings() {
+                Some(published) => {
+                    seen_generation = Some(generation);
+                    let enabled = published.engine.macro_enabled;
+                    settings = Some(published);
+                    (macros, pending_macros) = start_macro_load(enabled);
+                }
+                None if settings.is_none() => {
+                    let from_disk = load_settings();
+                    seen_generation = Some(generation);
+                    let enabled = from_disk.engine.macro_enabled;
+                    settings = Some(from_disk);
+                    (macros, pending_macros) = start_macro_load(enabled);
+                }
+                // A torn read: keep the settings in use and try again with the next key.
+                None => seen_stamp = None,
+            }
         }
-        HookInputs {
-            excluded_apps: settings.excluded_apps.clone(),
+        let current = settings.as_ref()?;
+        Some(HookInputs {
+            excluded_apps: current.excluded_apps.clone(),
             vietnamese: shared.vietnamese(),
-            engine: settings.engine,
-            toggle_hotkey: settings.toggle_hotkey,
+            engine: current.engine,
+            toggle_hotkey: current.toggle_hotkey,
             macros,
-        }
+        })
     })
+}
+
+fn take_finished_macros(pending: &mut Option<mpsc::Receiver<MacroList>>) -> Option<MacroList> {
+    let receiver = pending.as_ref()?;
+    match receiver.try_recv() {
+        Ok(macros) => {
+            *pending = None;
+            Some(macros)
+        }
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => {
+            *pending = None;
+            None
+        }
+    }
+}
+
+/// Macros that are off are known at once; otherwise the file is read in the background.
+fn start_macro_load(macro_enabled: bool) -> (Option<MacroList>, Option<mpsc::Receiver<MacroList>>) {
+    if !macro_enabled {
+        return (Some(Vec::new()), None);
+    }
+    let (sender, receiver) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("oh-key-macros".to_owned())
+        .spawn(move || {
+            let _ = sender.send(read_macros(true));
+        });
+    match spawned {
+        Ok(_) => (None, Some(receiver)),
+        Err(_) => (None, None),
+    }
 }
 
 fn read_macros(macro_enabled: bool) -> Vec<(String, String)> {
@@ -463,21 +664,31 @@ pub fn window_exe_name(window: HWND) -> Option<String> {
     process_exe_name(process_id)
 }
 
+/// The most program names remembered by process id; a full cache starts over.
+const EXE_NAME_CACHE_LIMIT: usize = 64;
+
+/// Sends the hook's output with `SendInput`.
+struct SendInputSink;
+
+impl OutputSink for SendInputSink {
+    fn send_edit(&mut self, edit: &TextEdit) {
+        send_edit(edit);
+    }
+
+    fn cancel_menu_activation(&mut self) {
+        cancel_menu_activation();
+    }
+}
+
 struct HookState {
     provider: InputsProvider,
     toggle_action: ToggleAction,
     options: HookOptions,
-    session: Session,
+    flow: KeyFlow,
     config: Config,
-    excluded_apps: Vec<String>,
-    toggle_hotkey: ToggleHotkey,
-    chord: ToggleChordTracker,
-    vietnamese: bool,
     foreground: HWND,
-    foreground_exe: String,
-    active: bool,
-    /// The key whose press was swallowed, so its release is swallowed too.
-    swallowed_key: Option<u32>,
+    /// Program names by process id, so a window switch back to a known program asks nothing.
+    exe_names: std::collections::HashMap<u32, String>,
 }
 
 thread_local! {
@@ -491,93 +702,80 @@ impl HookState {
         toggle_action: ToggleAction,
         options: HookOptions,
     ) -> Self {
-        let inputs = provider();
+        let inputs = provider().expect("the first call of an inputs provider returns the inputs");
         let mut state = HookState {
             provider,
             toggle_action,
             options,
-            session: Session::new(inputs.engine),
+            flow: KeyFlow::new(inputs.engine, inputs.toggle_hotkey),
             config: inputs.engine,
-            excluded_apps: Vec::new(),
-            toggle_hotkey: inputs.toggle_hotkey,
-            chord: ToggleChordTracker::default(),
-            vietnamese: false,
             foreground: HWND::default(),
-            foreground_exe: String::new(),
-            active: false,
-            swallowed_key: None,
+            exe_names: std::collections::HashMap::new(),
         };
-        state.apply(inputs);
+        state.apply_inputs(inputs);
+        state.follow_foreground();
         state
     }
 
-    /// Runs on a timer, never inside the key callback: it reads files and asks for process names.
-    fn refresh(&mut self) {
-        let inputs = (self.provider)();
-        self.apply(inputs);
+    /// Runs first in every key event. A window switch drops the word and resolves the new
+    /// window's program; the provider says whether the settings or the mode changed.
+    fn catch_up(&mut self) {
+        if unsafe { GetForegroundWindow() } != self.foreground {
+            FOREGROUND_CHANGES.fetch_add(1, Ordering::Relaxed);
+            self.flow.deactivate();
+            self.follow_foreground();
+        }
+        if let Some(inputs) = (self.provider)() {
+            self.apply_inputs(inputs);
+        }
     }
 
-    fn apply(&mut self, inputs: HookInputs) {
+    fn apply_inputs(&mut self, inputs: HookInputs) {
         if inputs.engine != self.config {
             self.config = inputs.engine;
-            self.session.set_config(inputs.engine);
+            self.flow.session.set_config(inputs.engine);
         }
         if let Some(macros) = inputs.macros {
-            self.session.set_macros(&macros);
+            self.flow.session.set_macros(&macros);
         }
-        self.excluded_apps = inputs.excluded_apps;
-        self.toggle_hotkey = inputs.toggle_hotkey;
-        self.vietnamese = inputs.vietnamese;
-        let foreground = unsafe { GetForegroundWindow() };
-        if foreground != self.foreground {
-            FOREGROUND_CHANGES.fetch_add(1, Ordering::Relaxed);
-            self.foreground = foreground;
-            self.foreground_exe = window_exe_name(foreground).unwrap_or_default();
+        self.flow.set_mode_and_apps(
+            inputs.vietnamese,
+            inputs.excluded_apps,
+            inputs.toggle_hotkey,
+        );
+    }
+
+    fn follow_foreground(&mut self) {
+        self.foreground = unsafe { GetForegroundWindow() };
+        let exe_name = self.exe_name_of_foreground();
+        self.flow.set_foreground_exe(exe_name);
+    }
+
+    /// Asking Windows for a program name costs a few system calls, so a known process id is
+    /// answered from memory. A failed lookup is not remembered.
+    fn exe_name_of_foreground(&mut self) -> String {
+        let mut process_id = 0u32;
+        unsafe { GetWindowThreadProcessId(self.foreground, Some(&mut process_id)) };
+        if process_id == 0 {
+            return String::new();
         }
-        self.refresh_active();
-    }
-
-    fn refresh_active(&mut self) {
-        let active = hook_is_active(self.vietnamese, &self.foreground_exe, &self.excluded_apps);
-        if active != self.active {
-            self.active = active;
-            self.session.reset();
+        if let Some(known) = self.exe_names.get(&process_id) {
+            return known.clone();
         }
-    }
-
-    fn deactivate(&mut self) {
-        FOREGROUND_CHANGES.fetch_add(1, Ordering::Relaxed);
-        self.active = false;
-        self.swallowed_key = None;
-        self.chord = ToggleChordTracker::default();
-        self.session.reset();
-    }
-
-    /// Takes effect at once; the next refresh reads the same mode back from the shared state.
-    fn toggle_mode(&mut self) {
-        (self.toggle_action)();
-        self.vietnamese = !self.vietnamese;
-        self.refresh_active();
-    }
-
-    /// Returns whether the press is the swallowed Alt+Z; the Ctrl+Shift chord completes on release.
-    fn handle_toggle_press(&mut self, virtual_key: u32) -> bool {
-        self.chord.key_down(virtual_key);
-        let alt = key_is_down(VK_MENU);
-        let ctrl = key_is_down(VK_CONTROL);
-        if !is_alt_z_press(self.toggle_hotkey, virtual_key, alt, ctrl) {
-            return false;
+        let Some(exe_name) = process_exe_name(process_id) else {
+            return String::new();
+        };
+        if self.exe_names.len() >= EXE_NAME_CACHE_LIMIT {
+            self.exe_names.clear();
         }
-        self.toggle_mode();
-        self.swallowed_key = Some(virtual_key);
-        cancel_menu_activation();
-        true
+        self.exe_names.insert(process_id, exe_name.clone());
+        exe_name
     }
 
-    fn handle_toggle_release(&mut self, virtual_key: u32) {
-        let completed = self.chord.key_up(virtual_key);
-        if completed && self.toggle_hotkey == ToggleHotkey::CtrlShift {
-            self.toggle_mode();
+    /// Takes effect at once; the next key event reads the same mode back from the shared state.
+    fn run_toggle_action(&mut self, outcome: KeyOutcome) {
+        if outcome.toggled {
+            (self.toggle_action)();
         }
     }
 
@@ -591,42 +789,26 @@ impl HookState {
         ) {
             return false;
         }
-        if unsafe { GetForegroundWindow() } != self.foreground {
-            // The timer will resolve the new window; until then keys go through untouched.
-            self.deactivate();
-            return false;
-        }
+        self.catch_up();
         if !injected {
             PHYSICAL_KEYS.fetch_add(1, Ordering::Relaxed);
         }
         let virtual_key = event.vkCode;
-        if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
-            let was_swallowed = self.swallowed_key.take() == Some(virtual_key);
-            self.handle_toggle_release(virtual_key);
-            return was_swallowed;
-        }
-        if !matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) {
-            return false;
-        }
-        if self.handle_toggle_press(virtual_key) {
-            return true;
-        }
-        if !self.active {
-            return false;
-        }
-        let press = read_key_press(event);
-        match self.session.handle(classify_key(&press)) {
-            Verdict::PassThrough => false,
-            Verdict::EditThenPass(edit) => {
-                send_edit(&edit);
-                false
-            }
-            Verdict::Swallow(edit) => {
-                send_edit(&edit);
-                self.swallowed_key = Some(virtual_key);
-                true
-            }
-        }
+        let outcome = if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
+            self.flow.key_up(virtual_key)
+        } else if matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            self.flow.key_down(
+                virtual_key,
+                key_is_down(VK_MENU),
+                key_is_down(VK_CONTROL),
+                || read_key_press(event),
+                &mut SendInputSink,
+            )
+        } else {
+            KeyOutcome::default()
+        };
+        self.run_toggle_action(outcome);
+        outcome.swallow
     }
 }
 
@@ -792,16 +974,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
-unsafe extern "system" fn refresh_timer(_window: HWND, _message: u32, _id: usize, _time: u32) {
-    STATE.with(|cell| {
-        if let Ok(mut guard) = cell.try_borrow_mut()
-            && let Some(state) = guard.as_mut()
-        {
-            state.refresh();
-        }
-    });
-}
-
 /// The running hook thread. Dropping it removes the hook and joins the thread.
 pub struct HookHandle {
     thread_id: u32,
@@ -854,7 +1026,6 @@ fn run_hook_thread(
     let mut message = MSG::default();
     // Creates this thread's message queue, so a quit posted right away is not lost.
     let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
-    unsafe { SetTimer(None, 0, REFRESH_MILLISECONDS, Some(refresh_timer)) };
     let _ = ready.send(Some(unsafe { GetCurrentThreadId() }));
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         unsafe {
@@ -870,6 +1041,10 @@ fn install_hook() -> Option<HHOOK> {
     let module = unsafe { GetModuleHandleW(None) }.ok()?;
     unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook), Some(module.into()), 0) }.ok()
 }
+
+#[cfg(test)]
+#[path = "hook_headless.rs"]
+mod hook_headless;
 
 #[cfg(test)]
 mod tests {
@@ -1171,5 +1346,66 @@ mod tests {
         assert!(!hook_is_active(false, "notepad.exe", &excluded));
         assert!(!hook_is_active(true, "game.exe", &excluded));
         assert!(!hook_is_active(true, "", &excluded));
+    }
+
+    fn private_shared_state(label: &str) -> SharedState {
+        let name = format!("Local\\oh-key-provider-test-{label}-{}", std::process::id());
+        SharedState::open_named(&name).expect("create mapping")
+    }
+
+    fn settings_excluding(program: &str, macro_enabled: bool) -> Settings {
+        let mut settings = Settings {
+            excluded_apps: vec![program.to_owned()],
+            ..Settings::default()
+        };
+        settings.engine.macro_enabled = macro_enabled;
+        settings
+    }
+
+    #[test]
+    fn the_provider_answers_only_when_the_settings_or_the_mode_changed() {
+        let shared = private_shared_state("changes");
+        let writer = private_shared_state("changes");
+        writer.publish_settings(&settings_excluding("game.exe", false));
+        let mut provider = app_inputs_provider(shared);
+
+        let first = provider().expect("the first call returns the inputs");
+        assert_eq!(first.excluded_apps, vec!["game.exe".to_owned()]);
+        assert_eq!(first.macros, Some(Vec::new()));
+        assert!(provider().is_none());
+
+        writer.publish_settings(&settings_excluding("editor.exe", false));
+        let after_publish = provider().expect("new settings are picked up by the next key");
+        assert_eq!(after_publish.excluded_apps, vec!["editor.exe".to_owned()]);
+        assert_eq!(after_publish.macros, Some(Vec::new()));
+        assert!(provider().is_none());
+
+        writer.set_vietnamese(false);
+        let after_flip = provider().expect("a mode flip is picked up by the next key");
+        assert!(!after_flip.vietnamese);
+        assert_eq!(after_flip.macros, None);
+        assert_eq!(after_flip.excluded_apps, vec!["editor.exe".to_owned()]);
+        assert!(provider().is_none());
+    }
+
+    #[test]
+    fn the_macro_file_is_read_off_the_key_path() {
+        let shared = private_shared_state("macros");
+        let writer = private_shared_state("macros");
+        writer.publish_settings(&settings_excluding("game.exe", true));
+        let mut provider = app_inputs_provider(shared);
+
+        let first = provider().expect("the first call returns the inputs");
+        assert_eq!(first.macros, None, "the file is still being read");
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(inputs) = provider() {
+                assert!(inputs.macros.is_some());
+                break;
+            }
+            assert!(started.elapsed().as_secs() < 5, "the macros never arrived");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(provider().is_none());
     }
 }

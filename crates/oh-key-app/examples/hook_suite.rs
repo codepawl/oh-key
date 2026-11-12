@@ -12,14 +12,18 @@
 //! An optional first argument limits the run to cases whose name contains one of its
 //! comma-separated parts (the whole suite can outlast the 58 second watchdog).
 //!
-//! Key script: plain characters are typed; `{BS}` `{ENTER}` `{TAB}` `{ESC}` `{CAPS}` press that
-//! key, `{CTRLSHIFT}` and `{ALTZ}` press the toggle chords, `{WAIT}` pauses 350 ms so the
-//! autocomplete suggestion lands.
+//! The cases live in `src/hook_cases.rs` (key script syntax there); `cargo test` replays the same
+//! table headless. `{WAIT}` pauses 350 ms here so the autocomplete suggestion lands.
 
 #[cfg(windows)]
 #[allow(dead_code)]
 #[path = "../src/hook.rs"]
 mod hook;
+
+#[cfg(windows)]
+#[allow(dead_code)]
+#[path = "../src/hook_cases.rs"]
+mod hook_cases;
 
 #[cfg(windows)]
 mod suite {
@@ -53,8 +57,20 @@ mod suite {
     use windows::core::{HRESULT, PCWSTR, PWSTR, implement, w};
 
     use crate::hook::{self, HookInputs, HookOptions};
+    use crate::hook_cases::{Case, Control, all_cases};
 
+    /// A developer run must end fast so the keyboard is never hooked for long; a hosted runner is slower and
+    /// runs the suite in filtered parts (see the `hook-e2e` job), so it gets more time.
     const WATCHDOG: Duration = Duration::from_secs(58);
+    const WATCHDOG_ON_CI: Duration = Duration::from_secs(240);
+
+    fn watchdog_duration() -> Duration {
+        if std::env::var_os("CI").is_some() {
+            WATCHDOG_ON_CI
+        } else {
+            WATCHDOG
+        }
+    }
     const SUGGESTION_WAIT: Duration = Duration::from_millis(350);
     const EM_GETSEL: u32 = 0x00B0;
     const VK_BACK: u16 = 0x08;
@@ -66,206 +82,11 @@ mod suite {
     const VK_CAPITAL: u16 = 0x14;
     const VK_ESCAPE: u16 = 0x1B;
     const VK_Z: u16 = 0x5A;
+    const UNASSIGNED_KEY: u16 = 0xE8;
 
     static HOTKEY: AtomicU8 = AtomicU8::new(0);
     static VIETNAMESE: AtomicBool = AtomicBool::new(true);
     static TOGGLES: AtomicUsize = AtomicUsize::new(0);
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Control {
-        Plain,
-        Rich,
-        AddressBar,
-    }
-
-    impl Control {
-        fn label(self) -> &'static str {
-            match self {
-                Control::Plain => "edit",
-                Control::Rich => "rich",
-                Control::AddressBar => "addr",
-            }
-        }
-    }
-
-    struct Case {
-        name: &'static str,
-        control: Control,
-        keys: &'static str,
-        expected: &'static str,
-        key_delay_ms: u64,
-        hotkey: u8,
-    }
-
-    const fn case(
-        name: &'static str,
-        control: Control,
-        keys: &'static str,
-        expected: &'static str,
-    ) -> Case {
-        Case {
-            name,
-            control,
-            keys,
-            expected,
-            key_delay_ms: 25,
-            hotkey: 0,
-        }
-    }
-
-    const fn fast(mut base: Case) -> Case {
-        base.key_delay_ms = 5;
-        base
-    }
-
-    const fn with_hotkey(mut base: Case, hotkey: u8) -> Case {
-        base.hotkey = hotkey;
-        base
-    }
-
-    const HARD_RHYMES_KEYS: &str = "nguwowif khuyru thuowr quoocs giuwx nguyeenx dduowngf ";
-    const HARD_RHYMES_TEXT: &str = "người khuỷu thuở quốc giữ nguyễn đường ";
-
-    fn all_cases() -> Vec<Case> {
-        use Control::{AddressBar, Plain, Rich};
-        vec![
-            case("basic-sentence", Plain, "Vieetj Nam ", "Việt Nam "),
-            case(
-                "hard-rhymes-edit",
-                Plain,
-                HARD_RHYMES_KEYS,
-                HARD_RHYMES_TEXT,
-            ),
-            case("hard-rhymes-rich", Rich, HARD_RHYMES_KEYS, HARD_RHYMES_TEXT),
-            case(
-                "hard-rhymes-addr",
-                AddressBar,
-                HARD_RHYMES_KEYS,
-                HARD_RHYMES_TEXT,
-            ),
-            fast(case(
-                "fast-5ms-edit",
-                Plain,
-                HARD_RHYMES_KEYS,
-                HARD_RHYMES_TEXT,
-            )),
-            fast(case(
-                "fast-5ms-rich",
-                Rich,
-                HARD_RHYMES_KEYS,
-                HARD_RHYMES_TEXT,
-            )),
-            fast(case(
-                "fast-5ms-addr",
-                AddressBar,
-                HARD_RHYMES_KEYS,
-                HARD_RHYMES_TEXT,
-            )),
-            case("uppercase-shift", Plain, "VIEETJ ", "VIỆT "),
-            case("capitalised", Plain, "Nguwowif ", "Người "),
-            case(
-                "caps-lock-edit",
-                Plain,
-                "{CAPS}vieetj {CAPS}vieetj",
-                "VIỆT việt",
-            ),
-            case("caps-lock-rich", Rich, "{CAPS}vieetj {CAPS}", "VIỆT "),
-            case("backspace-then-retype", Plain, "vieet{BS}tj ", "việt "),
-            case("backspace-to-empty", Plain, "toois{BS}{BS}{BS}toi ", "toi "),
-            case("backspace-mid-word-rich", Rich, "chaof{BS}o ", "chào "),
-            case(
-                "backspace-then-retype-addr",
-                AddressBar,
-                "vieet{BS}tj ",
-                "việt ",
-            ),
-            case("backspace-plain-letters", Plain, "abc{BS}d ", "abd "),
-            case(
-                "english-words",
-                Plain,
-                "text window coffee ",
-                "text window coffee ",
-            ),
-            case(
-                "english-words-rich",
-                Rich,
-                "text window coffee ",
-                "text window coffee ",
-            ),
-            case("toggle-ctrl-shift", Plain, "{CTRLSHIFT}", "mode:english"),
-            case(
-                "toggle-ctrl-shift-twice",
-                Plain,
-                "{CTRLSHIFT}{CTRLSHIFT}",
-                "mode:vietnamese",
-            ),
-            case(
-                "toggle-ctrl-shift-after-typing",
-                Plain,
-                "vieetj {CTRLSHIFT}",
-                "mode:english",
-            ),
-            with_hotkey(case("toggle-alt-z", Plain, "{ALTZ}", "mode:english"), 1),
-            with_hotkey(
-                case(
-                    "toggle-alt-z-after-typing",
-                    Plain,
-                    "vieetj {ALTZ}",
-                    "mode:english",
-                ),
-                1,
-            ),
-            with_hotkey(
-                case(
-                    "toggle-alt-z-keeps-typing-working",
-                    Plain,
-                    "{ALTZ}{ALTZ}vieetj ",
-                    "mode:vietnamese",
-                ),
-                1,
-            ),
-            case(
-                "digits-punctuation",
-                Plain,
-                "vieetj, nam. 2026 vieetj1",
-                "việt, nam. 2026 việt1",
-            ),
-            case(
-                "enter-commits-rich",
-                Rich,
-                "vieetj{ENTER}nam{ENTER}",
-                "việt\r\nnam\r\n",
-            ),
-            case("tab-commits-edit", Plain, "vieetj{TAB}", "việt"),
-            case("english-then-enter-rich", Rich, "text{ENTER}", "text\r\n"),
-            case(
-                "addr-suggestion-then-circumflex",
-                AddressBar,
-                "vie{WAIT}e",
-                "viê",
-            ),
-            case(
-                "addr-suggestion-then-tone",
-                AddressBar,
-                "vie{WAIT}ej",
-                "việ",
-            ),
-            case("addr-suggestion-d-bar", AddressBar, "d{WAIT}di", "đi"),
-            case(
-                "addr-suggestion-backspace",
-                AddressBar,
-                "vie{WAIT}{BS}",
-                "vi",
-            ),
-            case(
-                "addr-word-then-suggestion",
-                AddressBar,
-                "coffee{WAIT}",
-                "coffee",
-            ),
-            case("addr-circumflex-word", AddressBar, "vie{WAIT}etj ", "việt "),
-        ]
-    }
 
     // ---- the owner's tray app ---------------------------------------------------------------
 
@@ -665,7 +486,9 @@ mod suite {
             let _ = SetWindowTextW(control, w!(""));
             let _ = SetFocus(Some(control));
         }
-        // The hook thread notices mode and focus changes on its 50 ms timer.
+        // The hook reads the mode and the foreground at the start of a key event, so an unassigned
+        // key goes first: its effects must land before the interference counters are read.
+        press_chord(&[UNASSIGNED_KEY]);
         pump_messages(Duration::from_millis(130));
         control
     }
@@ -802,7 +625,7 @@ mod suite {
         let shield = std::sync::Arc::new(OwnerShield::raise());
         let watchdog_shield = std::sync::Arc::clone(&shield);
         std::thread::spawn(move || {
-            std::thread::sleep(WATCHDOG);
+            std::thread::sleep(watchdog_duration());
             eprintln!("hook_suite: timed out");
             if let Some(shield) = watchdog_shield.as_ref() {
                 shield.lower();
@@ -831,12 +654,21 @@ mod suite {
         if _auto_complete.is_err() {
             eprintln!("hook_suite: the autocomplete source could not be attached");
         }
-        let provider = Box::new(|| HookInputs {
-            excluded_apps: Vec::new(),
-            vietnamese: VIETNAMESE.load(Ordering::Relaxed),
-            engine: Config::default(),
-            toggle_hotkey: hotkey_from_code(HOTKEY.load(Ordering::Relaxed)),
-            macros: None,
+        let mut seen = None;
+        let provider = Box::new(move || {
+            let vietnamese = VIETNAMESE.load(Ordering::Relaxed);
+            let hotkey_code = HOTKEY.load(Ordering::Relaxed);
+            if seen == Some((vietnamese, hotkey_code)) {
+                return None;
+            }
+            seen = Some((vietnamese, hotkey_code));
+            Some(HookInputs {
+                excluded_apps: Vec::new(),
+                vietnamese,
+                engine: Config::default(),
+                toggle_hotkey: hotkey_from_code(hotkey_code),
+                macros: None,
+            })
         });
         let toggle = Box::new(|| {
             VIETNAMESE.fetch_xor(true, Ordering::Relaxed);
