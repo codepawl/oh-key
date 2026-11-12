@@ -98,10 +98,8 @@ jobs:
       - name: Build the hook examples
         run: cargo build -p oh-key-app --examples --locked --target x86_64-pc-windows-msvc
       - name: Run hook_suite and hook_e2e
-        # Not yet seen on a hosted runner: a runner whose desktop lets a window be created but
-        # not focused ends in case mismatches (exit 1), which is not a hook bug. The step stays
-        # advisory until one hosted run shows the real exit codes; then drop continue-on-error.
-        continue-on-error: true
+        # Hosted runners give the suite a focusable window (runs 43194692427 and 43195361798
+        # passed), so a mismatch here is a hook bug and fails the job.
         shell: pwsh
         timeout-minutes: 8
         run: |
@@ -135,7 +133,6 @@ jobs:
       - name: Stress the hook (slow callbacks and busy cores)
         # The callback sleeps 60 ms on every third key event and every core is busy, so keys queue
         # up behind our own edits like on a loaded machine. Exit code 2 and 3 are skips, as above.
-        continue-on-error: true
         shell: pwsh
         timeout-minutes: 8
         env:
@@ -162,7 +159,6 @@ jobs:
       - name: Stress the hook with callbacks past the timeout
         # Every 20th key holds the callback for 350 ms, above the 300 ms timeout, so Windows
         # passes the key on and may remove the hook: the late-swallow and watchdog paths run.
-        continue-on-error: true
         shell: pwsh
         timeout-minutes: 8
         env:

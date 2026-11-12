@@ -437,7 +437,9 @@ impl Mitigations {
 impl Default for Mitigations {
     fn default() -> Self {
         Mitigations {
-            echo_gating: true,
+            // Off: on real Windows the echoes did not all come back, so held keys were never typed
+            // (CI hook-e2e, run 43208642701: "Viet Nam " came out as "Vie").
+            echo_gating: false,
             callback_budget_milliseconds: Some(DEFAULT_CALLBACK_BUDGET_MILLISECONDS),
             circuit_breaker: true,
         }

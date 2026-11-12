@@ -741,7 +741,7 @@ fn legacy_keys_queued_behind_an_edit_garble_the_text() {
 
 #[test]
 fn fixed_keys_queued_behind_an_edit_wait_for_it() {
-    let failures = burst_failures(Mitigations::default());
+    let failures = burst_failures(echo_gated());
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
@@ -829,6 +829,20 @@ fn active_flow() -> KeyFlow {
     flow
 }
 
+/// Echo gating is off by default (it held keys forever on real Windows); its own tests turn it on.
+fn echo_gated() -> Mitigations {
+    Mitigations {
+        echo_gating: true,
+        ..Mitigations::default()
+    }
+}
+
+fn echo_gated_flow() -> KeyFlow {
+    let mut flow = active_flow();
+    flow.set_mitigations(echo_gated());
+    flow
+}
+
 fn press_letter_on(flow: &mut KeyFlow, sink: &mut RecordingSink, letter: char) -> KeyOutcome {
     let press = KeyPress {
         virtual_key: u32::from(letter.to_ascii_uppercase()),
@@ -849,7 +863,7 @@ fn type_until_the_tone_edit(flow: &mut KeyFlow, sink: &mut RecordingSink) {
 
 #[test]
 fn a_key_typed_while_an_edit_is_in_flight_waits_and_goes_out_after_the_echo() {
-    let mut flow = active_flow();
+    let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
     type_until_the_tone_edit(&mut flow, &mut sink);
     sink.now_milliseconds = 10;
@@ -889,7 +903,7 @@ fn a_key_after_the_echo_deadline_is_not_held_forever() {
 
 #[test]
 fn enter_while_an_edit_is_in_flight_ends_the_wait_and_keeps_the_waiting_letters() {
-    let mut flow = active_flow();
+    let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
     type_until_the_tone_edit(&mut flow, &mut sink);
     sink.now_milliseconds = 10;
@@ -932,7 +946,7 @@ fn land_the_first_edit(flow: &mut KeyFlow, sink: &mut RecordingSink) {
 
 #[test]
 fn a_shortcut_while_an_edit_is_in_flight_waits_behind_the_waiting_letters() {
-    let mut flow = active_flow();
+    let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
     type_until_the_tone_edit(&mut flow, &mut sink);
     sink.now_milliseconds = 10;
@@ -950,7 +964,7 @@ fn a_shortcut_while_an_edit_is_in_flight_waits_behind_the_waiting_letters() {
 
 #[test]
 fn a_hook_reinstall_types_the_keys_that_waited_for_a_lost_echo() {
-    let mut flow = active_flow();
+    let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
     type_until_the_tone_edit(&mut flow, &mut sink);
     sink.now_milliseconds = 10;
@@ -963,7 +977,7 @@ fn a_hook_reinstall_types_the_keys_that_waited_for_a_lost_echo() {
 
 #[test]
 fn a_waiting_key_that_the_system_passed_on_is_not_typed_again() {
-    let mut flow = active_flow();
+    let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
     type_until_the_tone_edit(&mut flow, &mut sink);
     sink.now_milliseconds = 10;
