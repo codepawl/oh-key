@@ -1,0 +1,10 @@
+[package]
+name = "oh-key-engine"
+description = "Vietnamese typing engine: Telex, VNI, VIQR, spell check and restore of invalid words"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "oh_key_engine"

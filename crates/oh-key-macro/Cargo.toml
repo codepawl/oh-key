@@ -1,0 +1,10 @@
+[package]
+name = "oh-key-macro"
+description = "Unikey-compatible macro (go tat) table with case-preserving expansion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+oh-key-charset = { path = "../oh-key-charset" }

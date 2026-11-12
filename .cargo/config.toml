@@ -1,0 +1,8 @@
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# The TSF crate crashes at startup when its tests are built for the gnu host
+# (STATUS_ACCESS_VIOLATION before main, see the GitHub issue). Use msvc locally too.
+[alias]
+check-all = "clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
+test-all = "test --workspace --target x86_64-pc-windows-msvc"

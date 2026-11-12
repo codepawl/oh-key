@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    # One zip per architecture: the TIP DLL and the command line tool.
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: i686-pc-windows-msvc
+            arch: x86
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Test the pure crates
+        if: matrix.arch == 'x64'
+        run: cargo test --workspace --exclude oh-key-windows --release --locked
+      - name: Build the TIP and the command line tool
+        run: cargo build -p oh-key-windows -p oh-key-cli --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          release_dir="target/${{ matrix.target }}/release"
+          package="oh-key-windows-${{ matrix.arch }}"
+          mkdir "$package"
+          cp "$release_dir/ohkey_tip.dll" "$package/"
+          cp "$release_dir/oh-key.exe" "$package/"
+          cp LICENSE README.md "$package/"
+          7z a "$package.zip" "./$package/*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oh-key-windows-${{ matrix.arch }}
+          path: oh-key-windows-${{ matrix.arch }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.zip | tee SHA256SUMS.txt
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" dist/* \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

@@ -1,0 +1,12 @@
+oh-key
+Copyright (C) 2026 CodePawl
+
+oh-key is licensed under the GNU General Public License, version 3 or later (see LICENSE).
+
+The charset conversion tables in crates/oh-key-charset/src/tables.rs are generated from
+data.cpp of UniKey/VnConv, Copyleft (C) 1998-2004 Pham Kim Long, licensed under the
+GNU General Public License version 2 or (at your option) any later version.
+
+The typing engine follows the behaviour of the UniKey input engine (ukengine),
+Copyright (C) 2000-2005 Pham Kim Long, licensed under the GNU Lesser General Public
+License version 2 or (at your option) any later version.

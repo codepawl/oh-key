@@ -1,0 +1,46 @@
+name: Bug report
+description: Typing produces the wrong text, or oh-key misbehaves
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: oh-key version
+      description: The output of `oh-key-cli --version`
+      placeholder: oh-key-cli 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: Windows 11 build 26300, x64
+    validations:
+      required: true
+  - type: input
+    id: application
+    attributes:
+      label: Application where it happens
+      placeholder: Notepad, Chrome, Word, VS Code
+  - type: dropdown
+    id: typing-method
+    attributes:
+      label: Typing method
+      options:
+        - Telex
+        - VNI
+        - VIQR
+        - Other
+  - type: textarea
+    id: keys
+    attributes:
+      label: Keys you pressed
+      description: The exact keys in order, for example `d d u w o w c j`
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected text and actual text
+    validations:
+      required: true

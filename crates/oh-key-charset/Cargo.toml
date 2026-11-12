@@ -1,0 +1,9 @@
+[package]
+name = "oh-key-charset"
+description = "Convert Vietnamese text between Unicode and the legacy charsets Unikey supports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
