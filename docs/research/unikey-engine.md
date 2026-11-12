@@ -1,4 +1,4 @@
-UNIKEY ENGINE PORTING SPEC (read from github.com/vn-input/ibus-unikey @ede78c3, dir ukengine/, a copy of x-unikey's ukengine, Pham Kim Long 1998-2005). Cloned data-only to C:/Users/nxan2/AppData/Local/Temp/oh-key-research/ibus (nothing built or run). Notation: tone 0..5 = none, sac(acute), huyen(grave), hoi(hook), nga(tilde), nang(dot). "ar"=a-circumflex (â), "ab"=a-breve (ă), "or"=ô, "oh"=ơ, "uh"=ư, "er"=ê, "dd"=đ.
+UNIKEY ENGINE PORTING SPEC (read from github.com/vn-input/ibus-unikey @ede78c3, dir ukengine/, a copy of x-unikey's ukengine, Pham Kim Long 1998-2005). Cloned data-only (nothing built or run). Notation: tone 0..5 = none, sac(acute), huyen(grave), hoi(hook), nga(tilde), nang(dot). "ar"=a-circumflex (â), "ab"=a-breve (ă), "or"=ô, "oh"=ơ, "uh"=ư, "er"=ê, "dd"=đ.
 
 ====================================================================
 1. LICENCES (exact wording in file headers)
@@ -117,4 +117,4 @@ Approach: hub-and-spoke through StdVnChar. Each charset implements `nextInput(by
 - Backspace accounting (getSeqSteps) for the engine: UNICODE and XUTF8 -> 1 per char; everything else -> encoded byte length of the char (apps delete by bytes in these charsets); UNIDECOMPOSED -> bytes/2.
 OhKey recommendation: Unicode NFC precomposed output only in the engine (backs = chars); keep legacy charsets in a separate converter crate using the std-index hub; generate the tables from data.cpp (SingleByteTables lines 96-242, DoubleByteTables 244-342, WinCP1258 343-394, VIQR/UnicodeComposite 441-520) by a script rather than retyping; copying them makes that crate GPL-2.0+.
 
-SUMMARY OF INVOLVED FILES: C:/Users/nxan2/AppData/Local/Temp/oh-key-research/ibus/ukengine/{ukengine.cpp (2388 lines, algorithm), inputproc.cpp (keymaps), vnlexi.h (enums), data.cpp (charset tables), mactab.cpp, charset.cpp}. No project files were created or modified; no checks run (research only).
+SUMMARY OF INVOLVED FILES: ukengine/{ukengine.cpp (2388 lines, algorithm), inputproc.cpp (keymaps), vnlexi.h (enums), data.cpp (charset tables), mactab.cpp, charset.cpp}. No project files were created or modified; no checks run (research only).
