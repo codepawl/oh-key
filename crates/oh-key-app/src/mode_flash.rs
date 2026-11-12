@@ -88,14 +88,27 @@ pub fn show(vietnamese: bool) {
 static RUNNING: Mutex<Option<Sender<bool>>> = Mutex::new(None);
 
 fn run_thread(receiver: Receiver<bool>) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+    let initialised = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) }.is_ok();
+    play_until_quiet(&receiver);
+    if initialised {
+        unsafe { CoUninitialize() };
     }
+}
+
+/// Plays effects until no switch is waiting, then clears the slot so the next switch starts a
+/// new thread.
+fn play_until_quiet(receiver: &Receiver<bool>) {
     let Ok(mut vietnamese) = receiver.recv() else {
         return;
     };
     loop {
-        let restart = play(vietnamese, &receiver).unwrap_or(None);
+        let restart = match play(vietnamese, receiver) {
+            Ok(restart) => restart,
+            Err(error) => {
+                crate::app_log::write(&format!("mode effect failed: {}", error.message()));
+                None
+            }
+        };
         if let Some(next) = restart {
             vietnamese = next;
             continue;
@@ -113,7 +126,6 @@ fn run_thread(receiver: Receiver<bool>) {
             }
         }
     }
-    unsafe { CoUninitialize() };
 }
 
 /// Plays the effect once; `Some(mode)` when a new switch arrived mid-way.
@@ -128,7 +140,8 @@ fn play(vietnamese: bool, receiver: &Receiver<bool>) -> Result<Option<bool>> {
     let offscreen = Offscreen::new(&graphics, pixel_width, pixel_height)?;
     unsafe { offscreen.target.SetDpi(96.0 * scale, 96.0 * scale) };
     let surface = LayeredSurface::new(pixel_width, pixel_height)?;
-    let window = create_window()?;
+    let window = FlashWindow(create_window()?);
+    let window_handle = window.0;
     let mut scene = Scene::new(vietnamese);
     let started = Instant::now();
     let mut shown = false;
@@ -144,20 +157,30 @@ fn play(vietnamese: bool, receiver: &Receiver<bool>) -> Result<Option<bool>> {
         }
         scene.advance_to(elapsed);
         draw_frame(&offscreen.target, &graphics, &scene)?;
-        surface.present(&offscreen, window, origin)?;
+        surface.present(&offscreen, window_handle, origin)?;
         if !shown {
             unsafe {
-                let _ = ShowWindow(window, SW_SHOWNOACTIVATE);
+                let _ = ShowWindow(window_handle, SW_SHOWNOACTIVATE);
             }
             shown = true;
         }
         pump_messages();
         std::thread::sleep(FRAME);
     };
-    unsafe {
-        let _ = DestroyWindow(window);
-    }
+    drop(window);
     Ok(outcome)
+}
+
+/// The effect window, destroyed when this drops, also when a frame fails half way: otherwise
+/// a half drawn badge would stay on screen until oh-key quits.
+struct FlashWindow(HWND);
+
+impl Drop for FlashWindow {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyWindow(self.0);
+        }
+    }
 }
 
 /// Where the effect points: the caret of the window being typed in, else the mouse pointer.

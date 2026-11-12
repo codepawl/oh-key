@@ -107,7 +107,7 @@ This is the case that matters when you write English inside Vietnamese. The test
 - **Excluded apps** (ứng dụng tắt oh-key): programs on the list keep their keys untouched.
 - **Hotkeys:** Ctrl+Shift or Alt+Z switches V and E on Windows. They work in every app, also in English mode.
 - **Tray icon and settings window (Windows only):** the icon shows V or E. A left click switches the mode and a right click opens the menu.
-- **Mode switch sound and effect (Windows only):** a soft two-note sound, rising for V and falling for E. A V or E tile pops up by the caret and letters fly off it. Each has its own switch in the settings. Both stay off while a full-screen game or a presentation runs, and the effect follows the Windows "Animation effects" switch.
+- **Mode switch sound and effect (Windows only):** a soft two-note sound, rising for V and falling for E. A V or E tile pops up by the caret and letters fly off it. Each has its own switch in the settings. Both also show over full-screen apps; a Direct3D game in exclusive full screen gets the sound only, Windows presentation mode gets neither, and the effect follows the Windows "Animation effects" switch.
 - **macOS:** the same engine, `macros.txt`, the excluded apps list, the hotkeys (Ctrl+Shift or Option+Z) and an input source menu. The macOS build has been built and bundle-checked on a Mac, but not tried in real apps. CI builds it.
 
 ![Macros](docs/macros.png)

@@ -247,13 +247,14 @@ pub fn problem_lines(log: &str, identity: &Identity) -> Vec<String> {
 /// The openings of log lines that may be sent. Every other line that matched `is_problem` is
 /// replaced by a marker, so the privacy of a report does not depend on what a future
 /// `app_log::write` call says.
-pub const KNOWN_LOG_PREFIXES: [&str; 6] = [
+pub const KNOWN_LOG_PREFIXES: [&str; 7] = [
     "crash in ",
     "update check failed: ",
     "report failed: ",
     "update-failed: ",
     "error: ",
     "update to ",
+    "mode effect failed: ",
 ];
 
 const WITHHELD_LINE: &str = "(line withheld)";
