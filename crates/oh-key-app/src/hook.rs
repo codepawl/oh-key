@@ -663,6 +663,21 @@ impl KeyFlow {
         self.echoes_outstanding = 0;
     }
 
+    /// The hook was reinstalled after it missed keys: no held key can be trusted, and the word
+    /// on screen may hold keys the engine never saw. Keys that were swallowed while they waited
+    /// for an echo that will not come are typed as they are, and the word starts over.
+    pub fn forget_held_keys(&mut self, sink: &mut impl OutputSink) {
+        self.swallowed_keys.clear();
+        for index in 0..self.deferred_keys.len() {
+            let key = self.deferred_keys[index];
+            self.send_raw(key, sink);
+        }
+        self.deferred_keys.clear();
+        self.echoes_outstanding = 0;
+        self.chord = ToggleChordTracker::default();
+        self.session.reset();
+    }
+
     fn toggle_mode(&mut self) {
         self.vietnamese = !self.vietnamese;
         self.refresh_active();
@@ -1240,10 +1255,6 @@ fn mitigations_for_this_machine(configured: Mitigations) -> Mitigations {
     let cutoff =
         late_swallow_cutoff_for_timeout(timeout.unwrap_or(DEFAULT_HOOKS_TIMEOUT_MILLISECONDS));
     LATE_SWALLOW_IGNORED_MILLISECONDS.store(cutoff, Ordering::Relaxed);
-    HOOKS_TIMEOUT_MILLISECONDS.store(
-        timeout.unwrap_or(DEFAULT_HOOKS_TIMEOUT_MILLISECONDS),
-        Ordering::Relaxed,
-    );
     let Some(configured_budget) = configured.callback_budget_milliseconds else {
         return configured;
     };
@@ -1582,49 +1593,90 @@ pub fn late_swallow_cutoff_for_timeout(timeout_milliseconds: u64) -> u64 {
 /// Callbacks that took longer than this are counted; they are what Windows may punish.
 const SLOW_CALLBACK_MICROSECONDS: u32 = 50_000;
 static SLOW_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
-/// The user's `LowLevelHooksTimeout`. A call that ran past it may have cost us the hook.
-static HOOKS_TIMEOUT_MILLISECONDS: AtomicU64 = AtomicU64::new(DEFAULT_HOOKS_TIMEOUT_MILLISECONDS);
+/// Counts the main hook's callbacks; the watchdog compares it between the sentinel's keys.
+static CALLBACK_SERIAL: AtomicU32 = AtomicU32::new(0);
 static HOOK_REINSTALLS: AtomicUsize = AtomicUsize::new(0);
+/// The main hook's thread, where the sentinel posts each key's check.
+static HOOK_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+/// Posted by the sentinel for each key it sees.
+const WM_CHECK_HOOK: u32 = WM_APP + 1;
+/// Keys kept coming this long without one main-hook callback: the hook is gone. A busy hook
+/// thread can stall for a few hundred milliseconds and keep its hook, so this is well above
+/// any stall Windows forgives.
+const SILENT_HOOK_MILLISECONDS: i32 = 1000;
+/// A reinstall is cheap but not free; never more often than this.
+const REINSTALL_PAUSE_MILLISECONDS: i32 = 10_000;
 
 /// How many key callbacks ran longer than 50 ms so far.
 #[allow(dead_code)]
 pub fn slow_callback_count() -> usize {
     SLOW_CALLBACKS.load(Ordering::Relaxed)
 }
-/// Posted to the hook thread, so the hook is swapped after the callback, never inside it.
-const WM_REINSTALL_HOOK: u32 = WM_APP + 1;
 
-/// How many times the hook was reinstalled after a call that ran past the timeout.
+/// How many times the watchdog reinstalled the hook.
 #[allow(dead_code)]
 pub fn hook_reinstall_count() -> usize {
     HOOK_REINSTALLS.load(Ordering::Relaxed)
 }
 
-/// Windows silently removes a low-level hook whose call ran past `LowLevelHooksTimeout`, and
-/// that is the only way it loses one. The callback itself sees when that happened: Windows
-/// stamps each key with `event_tick`, and the call ends at `finished_tick`. A key stamped 0
-/// carries no time, so only the callback's own duration counts for it. Mouse input never
-/// enters this, unlike `GetLastInputInfo`, which once took every mouse move for a lost hook.
-pub fn call_overran(
-    event_tick: u32,
-    finished_tick: u32,
-    callback_milliseconds: u64,
-    timeout_milliseconds: u64,
+/// What the watchdog remembers between the sentinel's keys.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SilenceWatch {
+    /// The callback count when the last key was checked.
+    pub serial_seen: Option<u32>,
+    /// When keys started arriving with no callback in between.
+    pub silent_since: Option<u32>,
+}
+
+/// Checked on the hook thread for each key the sentinel saw, after any callbacks Windows had
+/// already queued there. A callback since the last key clears the watch. The first key with
+/// none starts it, which happens whenever the sentinel's message comes in before the key's own
+/// callback, and keys that keep coming with no callback for `SILENT_HOOK_MILLISECONDS` mean
+/// the main hook is gone.
+pub fn watch_silence(watch: SilenceWatch, serial_now: u32, now_tick: u32) -> (SilenceWatch, bool) {
+    if watch.serial_seen != Some(serial_now) {
+        let fresh = SilenceWatch {
+            serial_seen: Some(serial_now),
+            silent_since: None,
+        };
+        return (fresh, false);
+    }
+    match watch.silent_since {
+        None => {
+            let started = SilenceWatch {
+                silent_since: Some(now_tick),
+                ..watch
+            };
+            (started, false)
+        }
+        Some(since) => {
+            let silent = now_tick.wrapping_sub(since) as i32 >= SILENT_HOOK_MILLISECONDS;
+            (watch, silent)
+        }
+    }
+}
+
+/// A reinstall that brought no callback back means the main hook is blocked, not removed, so
+/// trying again would only repeat; the watchdog waits for a callback first.
+pub fn reinstall_allowed(
+    now_tick: u32,
+    last_reinstall_tick: Option<u32>,
+    callback_since_reinstall: bool,
 ) -> bool {
-    if callback_milliseconds >= timeout_milliseconds {
-        return true;
+    match last_reinstall_tick {
+        None => true,
+        Some(last) => {
+            callback_since_reinstall
+                && now_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS
+        }
     }
-    if event_tick == 0 {
-        return false;
-    }
-    let waited = finished_tick.wrapping_sub(event_tick) as i32;
-    waited >= 0 && waited as u64 >= timeout_milliseconds
 }
 
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     const HC_ACTION: i32 = 0;
     if code == HC_ACTION {
         let started = std::time::Instant::now();
+        CALLBACK_SERIAL.fetch_add(1, Ordering::Relaxed);
         let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let mut swallowed = STATE.with(|cell| match cell.try_borrow_mut() {
             Ok(mut guard) => guard.as_mut().is_some_and(|state| {
@@ -1651,22 +1703,6 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         }
         if elapsed.as_micros() > u128::from(SLOW_CALLBACK_MICROSECONDS) {
             SLOW_CALLBACKS.fetch_add(1, Ordering::Relaxed);
-        }
-        let overran = call_overran(
-            event.time,
-            unsafe { GetTickCount() },
-            elapsed.as_millis().min(u128::from(u64::MAX)) as u64,
-            HOOKS_TIMEOUT_MILLISECONDS.load(Ordering::Relaxed),
-        );
-        if overran {
-            let _ = unsafe {
-                PostThreadMessageW(
-                    GetCurrentThreadId(),
-                    WM_REINSTALL_HOOK,
-                    WPARAM(0),
-                    LPARAM(0),
-                )
-            };
         }
         if swallowed {
             return LRESULT(1);
@@ -1714,8 +1750,16 @@ pub fn start(
 }
 
 thread_local! {
-    /// The installed hook; only the hook thread touches it.
+    /// The installed hook and the watchdog's memory; only the hook thread touches them.
     static INSTALLED_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
+    static SILENCE: Cell<SilenceWatch> = const {
+        Cell::new(SilenceWatch {
+            serial_seen: None,
+            silent_since: None,
+        })
+    };
+    static LAST_REINSTALL_TICK: Cell<Option<u32>> = const { Cell::new(None) };
+    static SERIAL_AT_REINSTALL: Cell<u32> = const { Cell::new(0) };
 }
 
 fn run_hook_thread(
@@ -1734,16 +1778,23 @@ fn run_hook_thread(
     let mut message = MSG::default();
     // Creates this thread's message queue, so a quit posted right away is not lost.
     let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
+    HOOK_THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::Relaxed);
+    // Installed after the main hook, so Windows calls it first, ahead of any swallowing.
+    let sentinel = start_sentinel();
     let _ = ready.send(Some(unsafe { GetCurrentThreadId() }));
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
-        if message.hwnd.is_invalid() && message.message == WM_REINSTALL_HOOK {
-            reinstall_hook();
+        if message.hwnd.is_invalid() && message.message == WM_CHECK_HOOK {
+            check_hook();
             continue;
         }
         unsafe {
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
         }
+    }
+    if let Some((sentinel_thread_id, sentinel_thread)) = sentinel {
+        let _ = unsafe { PostThreadMessageW(sentinel_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        let _ = sentinel_thread.join();
     }
     if let Some(current) = INSTALLED_HOOK.with(Cell::take) {
         let _ = unsafe { UnhookWindowsHookEx(current) };
@@ -1769,19 +1820,103 @@ fn prefer_responsiveness() {
     }
 }
 
-/// Swaps the hook for a fresh one after a call that ran past the timeout. The new hook goes in
-/// before the old one comes out, and no hook call can run on this thread in between, so no key
-/// passes unhooked and none is seen twice. The typing state is kept: the keys around the late
-/// call reached the flow, and only Windows' copy of the hook may be gone.
-fn reinstall_hook() {
+/// The sentinel: a second low-level hook on its own thread that only notes each key and tells
+/// the hook thread. It does no work, so Windows never drops it for running late, and unlike
+/// `GetLastInputInfo` it sees keys only, never the mouse. It never reads which key it was.
+fn start_sentinel() -> Option<(u32, JoinHandle<()>)> {
+    let (sender, receiver) = mpsc::channel();
+    let thread = std::thread::Builder::new()
+        .name("oh-key-hook-sentinel".to_owned())
+        .spawn(move || run_sentinel_thread(sender))
+        .ok()?;
+    match receiver.recv() {
+        Ok(Some(thread_id)) => Some((thread_id, thread)),
+        _ => {
+            let _ = thread.join();
+            None
+        }
+    }
+}
+
+fn run_sentinel_thread(ready: mpsc::Sender<Option<u32>>) {
+    let Some(module) = unsafe { GetModuleHandleW(None) }.ok() else {
+        let _ = ready.send(None);
+        return;
+    };
+    let installed =
+        unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(sentinel_hook), Some(module.into()), 0) };
+    let Ok(hook) = installed else {
+        let _ = ready.send(None);
+        return;
+    };
+    let mut message = MSG::default();
+    let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
+    let _ = ready.send(Some(unsafe { GetCurrentThreadId() }));
+    while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
+        unsafe { DispatchMessageW(&message) };
+    }
+    let _ = unsafe { UnhookWindowsHookEx(hook) };
+}
+
+unsafe extern "system" fn sentinel_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    const HC_ACTION: i32 = 0;
+    if code == HC_ACTION {
+        let _ = unsafe {
+            PostThreadMessageW(
+                HOOK_THREAD_ID.load(Ordering::Relaxed),
+                WM_CHECK_HOOK,
+                WPARAM(0),
+                LPARAM(0),
+            )
+        };
+    }
+    unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Runs on the hook thread for each key the sentinel saw.
+fn check_hook() {
+    let now = unsafe { GetTickCount() };
+    let serial_now = CALLBACK_SERIAL.load(Ordering::Relaxed);
+    let (watch, silent) = watch_silence(SILENCE.with(Cell::get), serial_now, now);
+    SILENCE.with(|cell| cell.set(watch));
+    if !silent {
+        return;
+    }
+    let callback_since_reinstall = SERIAL_AT_REINSTALL.with(Cell::get) != serial_now;
+    if !reinstall_allowed(
+        now,
+        LAST_REINSTALL_TICK.with(Cell::get),
+        callback_since_reinstall,
+    ) {
+        return;
+    }
+    reinstall_hook(now, serial_now);
+}
+
+/// The new hook goes in before the old one comes out; no hook call can run on this thread in
+/// between, so no key is seen twice. A failed install leaves the pause unset, so the next
+/// missed keys try again.
+fn reinstall_hook(now: u32, serial_now: u32) {
     let Some(fresh) = install_hook() else {
         return;
     };
     if let Some(old) = INSTALLED_HOOK.with(|cell| cell.replace(Some(fresh))) {
         let _ = unsafe { UnhookWindowsHookEx(old) };
     }
+    LAST_REINSTALL_TICK.with(|cell| cell.set(Some(now)));
+    SERIAL_AT_REINSTALL.with(|cell| cell.set(serial_now));
+    SILENCE.with(|cell| cell.set(SilenceWatch::default()));
     HOOK_REINSTALLS.fetch_add(1, Ordering::Relaxed);
     pass_on_diagnostic(HookDiagnostic::Reinstalled);
+    // Keys passed while the hook was gone: the engine's word no longer matches the screen, and
+    // keys that waited for an echo lost with the hook are typed now.
+    STATE.with(|cell| {
+        if let Ok(mut guard) = cell.try_borrow_mut()
+            && let Some(state) = guard.as_mut()
+        {
+            state.flow.forget_held_keys(&mut SendInputSink);
+        }
+    });
 }
 
 fn install_hook() -> Option<HHOOK> {

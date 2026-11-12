@@ -1042,19 +1042,63 @@ fn the_budget_is_half_the_system_timeout_within_limits() {
     assert_eq!(budget_for_timeout(10), 20);
 }
 
+fn watch_keys(keys: &[(u32, u32)]) -> bool {
+    let mut watch = SilenceWatch::default();
+    let mut silent = false;
+    for &(serial, tick) in keys {
+        (watch, silent) = watch_silence(watch, serial, tick);
+    }
+    silent
+}
+
 #[test]
-fn a_call_past_the_timeout_is_noticed() {
-    // The callback itself ran too long.
-    assert!(call_overran(1_000, 1_400, 350, 300));
-    // The callback was quick, but it started long after Windows stamped the key.
-    assert!(call_overran(1_000, 1_320, 5, 300));
-    assert!(!call_overran(1_000, 1_100, 5, 300));
+fn keys_with_no_callback_for_a_second_mean_the_hook_is_gone() {
+    // Each key brought a callback.
+    assert!(!watch_keys(&[(1, 0), (2, 400), (3, 800), (4, 1_200)]));
+    // A 350 ms stall: the callbacks arrive late, but they arrive.
+    assert!(!watch_keys(&[
+        (1, 0),
+        (1, 100),
+        (1, 340),
+        (4, 360),
+        (5, 400)
+    ]));
+    // Nothing for over a second.
+    assert!(watch_keys(&[(1, 0), (1, 100), (1, 600), (1, 1_100)]));
+    // A callback in the middle starts the watch over.
+    assert!(!watch_keys(&[(1, 0), (1, 100), (2, 600), (2, 1_100)]));
     // The tick counter wraps around after 49 days.
-    assert!(!call_overran(u32::MAX - 50, 50, 5, 300));
-    assert!(call_overran(u32::MAX - 50, 400, 5, 300));
-    // A key with no time stamp only counts the callback's own duration.
-    assert!(!call_overran(0, 900_000, 5, 300));
-    assert!(call_overran(0, 900_000, 300, 300));
+    assert!(watch_keys(&[
+        (1, u32::MAX - 100),
+        (1, u32::MAX - 50),
+        (1, 1_000)
+    ]));
+}
+
+#[test]
+fn reinstalling_is_rate_limited() {
+    assert!(reinstall_allowed(1_000, None, false));
+    assert!(!reinstall_allowed(5_000, Some(1_000), true));
+    assert!(reinstall_allowed(11_000, Some(1_000), true));
+}
+
+#[test]
+fn a_reinstall_that_brought_no_callback_back_is_not_repeated() {
+    // The hook is blocked, not removed: reinstalling again would only loop.
+    assert!(!reinstall_allowed(60_000, Some(1_000), false));
+}
+
+#[test]
+fn a_hook_reinstall_types_the_keys_that_waited_for_a_lost_echo() {
+    let mut flow = echo_gated_flow();
+    let mut sink = RecordingSink::default();
+    type_until_the_tone_edit(&mut flow, &mut sink);
+    sink.now_milliseconds = 10;
+    assert!(press_letter_on(&mut flow, &mut sink, 'j').swallow);
+    flow.forget_held_keys(&mut sink);
+    assert_eq!(sink.edits.len(), 2, "the swallowed letter was lost");
+    assert_eq!(sink.edits[1].text, "j");
+    assert!(flow.deferred_keys.is_empty());
 }
 
 #[test]
