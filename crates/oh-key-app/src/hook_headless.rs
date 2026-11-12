@@ -1090,6 +1090,21 @@ fn reinstalling_is_rate_limited() {
 }
 
 #[test]
+fn one_key_without_a_callback_is_only_a_suspect() {
+    // The raw input of a key can be handled before its hook callback.
+    let quiet = facts(20_000, None, false);
+    assert_eq!(watchdog_step(quiet, None, 7), WatchdogStep::Suspect(7));
+    // The callback came after all: the count moved, so the next key starts over.
+    assert_eq!(watchdog_step(quiet, Some(7), 8), WatchdogStep::Suspect(8));
+    assert_eq!(watchdog_step(quiet, Some(7), 7), WatchdogStep::Reinstall);
+    let live = WatchdogFacts {
+        last_callback_tick: 20_000,
+        ..quiet
+    };
+    assert_eq!(watchdog_step(live, Some(7), 7), WatchdogStep::Nothing);
+}
+
+#[test]
 fn a_reinstall_that_brought_no_callback_back_is_not_repeated() {
     // An elevated window keeps the hook out: reinstalling again would only loop.
     assert!(!should_reinstall(facts(60_000, Some(1_000), false)));

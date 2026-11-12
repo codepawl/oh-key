@@ -39,10 +39,10 @@ use windows::Win32::UI::Input::{RAWINPUTDEVICE, RIDEV_INPUTSINK, RegisterRawInpu
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
     GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HHOOK, HWND_MESSAGE,
-    KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, RegisterClassExW,
-    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
-    WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
-    WNDCLASSEXW,
+    KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostMessageW, PostThreadMessageW,
+    RegisterClassExW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN,
+    WM_SYSKEYUP, WM_USER, WNDCLASSEXW,
 };
 use windows::core::{Owned, PWSTR, w};
 
@@ -1599,6 +1599,20 @@ static SLOW_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 static LAST_CALLBACK_TICK: AtomicU32 = AtomicU32::new(0);
 /// Counts hook callbacks, so the watchdog can tell whether one arrived since its last reinstall.
 static CALLBACK_SERIAL: AtomicU32 = AtomicU32::new(0);
+/// Keyboard keys the watchdog saw and hooks it reinstalled, for the end-to-end suite.
+static WATCHDOG_KEYS: AtomicUsize = AtomicUsize::new(0);
+static WATCHDOG_REINSTALLS: AtomicUsize = AtomicUsize::new(0);
+/// Posted to the watch window, so a reinstall never runs inside `WM_INPUT`.
+const WM_REINSTALL_HOOK: u32 = WM_APP + 1;
+
+/// How many keyboard keys the watchdog saw and how many times it reinstalled the hook.
+#[allow(dead_code)]
+pub fn watchdog_counts() -> (usize, usize) {
+    (
+        WATCHDOG_KEYS.load(Ordering::Relaxed),
+        WATCHDOG_REINSTALLS.load(Ordering::Relaxed),
+    )
+}
 
 /// How many key callbacks ran longer than 50 ms so far.
 #[allow(dead_code)]
@@ -1642,6 +1656,34 @@ pub fn should_reinstall(facts: WatchdogFacts) -> bool {
             facts.callback_since_reinstall
                 && facts.key_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS
         }
+    }
+}
+
+/// What the watchdog does with one keyboard key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WatchdogStep {
+    /// The hook answered, or may not be reinstalled now.
+    Nothing,
+    /// No callback came for this key; the callback count is kept to compare at the next key.
+    Suspect(u32),
+    Reinstall,
+}
+
+/// A key's raw input can be handled before that key's hook callback, so one key without a
+/// callback proves nothing. A second key while the callback count has not moved since the
+/// first one does.
+pub fn watchdog_step(
+    facts: WatchdogFacts,
+    suspect_serial: Option<u32>,
+    serial_now: u32,
+) -> WatchdogStep {
+    if !should_reinstall(facts) {
+        return WatchdogStep::Nothing;
+    }
+    if suspect_serial == Some(serial_now) {
+        WatchdogStep::Reinstall
+    } else {
+        WatchdogStep::Suspect(serial_now)
     }
 }
 
@@ -1729,6 +1771,8 @@ thread_local! {
     static INSTALLED_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
     static LAST_REINSTALL_TICK: Cell<Option<u32>> = const { Cell::new(None) };
     static SERIAL_AT_REINSTALL: Cell<u32> = const { Cell::new(0) };
+    /// The callback count at a key that came without a callback.
+    static SUSPECT_SERIAL: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 fn run_hook_thread(
@@ -1839,21 +1883,52 @@ unsafe extern "system" fn key_watch_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     if message == WM_INPUT {
-        reinstall_hook_if_removed(unsafe { GetTickCount() });
+        WATCHDOG_KEYS.fetch_add(1, Ordering::Relaxed);
+        check_key(window, unsafe { GetTickCount() });
+    }
+    if message == WM_REINSTALL_HOOK {
+        reinstall_hook_if_removed(wparam.0 as u32, lparam.0 as u32);
+        return LRESULT(0);
     }
     // DefWindowProc frees the raw input buffer.
     unsafe { DefWindowProcW(window, message, wparam, lparam) }
 }
 
-fn reinstall_hook_if_removed(key_tick: u32) {
-    let serial_now = CALLBACK_SERIAL.load(Ordering::Relaxed);
-    let facts = WatchdogFacts {
+fn watchdog_facts(key_tick: u32, serial_now: u32) -> WatchdogFacts {
+    WatchdogFacts {
         key_tick,
         last_callback_tick: LAST_CALLBACK_TICK.load(Ordering::Relaxed),
         last_reinstall_tick: LAST_REINSTALL_TICK.with(Cell::get),
         callback_since_reinstall: SERIAL_AT_REINSTALL.with(Cell::get) != serial_now,
-    };
-    if !should_reinstall(facts) {
+    }
+}
+
+fn check_key(window: HWND, key_tick: u32) {
+    let serial_now = CALLBACK_SERIAL.load(Ordering::Relaxed);
+    let facts = watchdog_facts(key_tick, serial_now);
+    match watchdog_step(facts, SUSPECT_SERIAL.with(Cell::get), serial_now) {
+        WatchdogStep::Nothing => SUSPECT_SERIAL.with(|cell| cell.set(None)),
+        WatchdogStep::Suspect(serial) => SUSPECT_SERIAL.with(|cell| cell.set(Some(serial))),
+        WatchdogStep::Reinstall => {
+            SUSPECT_SERIAL.with(|cell| cell.set(None));
+            // Windows may still be waiting on the old hook for this very key, so the swap
+            // happens after this message, not inside it.
+            let _ = unsafe {
+                PostMessageW(
+                    Some(window),
+                    WM_REINSTALL_HOOK,
+                    WPARAM(key_tick as usize),
+                    LPARAM(serial_now as isize),
+                )
+            };
+        }
+    }
+}
+
+fn reinstall_hook_if_removed(key_tick: u32, serial_at_post: u32) {
+    let serial_now = CALLBACK_SERIAL.load(Ordering::Relaxed);
+    // A callback that arrived after the post, or a reinstall already done, cancels this one.
+    if serial_now != serial_at_post || !should_reinstall(watchdog_facts(key_tick, serial_now)) {
         return;
     }
     if let Some(old) = INSTALLED_HOOK.with(Cell::take) {
@@ -1864,6 +1939,7 @@ fn reinstall_hook_if_removed(key_tick: u32) {
     if installed.is_some() {
         LAST_REINSTALL_TICK.with(|cell| cell.set(Some(key_tick)));
         SERIAL_AT_REINSTALL.with(|cell| cell.set(serial_now));
+        WATCHDOG_REINSTALLS.fetch_add(1, Ordering::Relaxed);
         pass_on_diagnostic(HookDiagnostic::Reinstalled);
     }
     INSTALLED_HOOK.with(|cell| cell.set(installed));
