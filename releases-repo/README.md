@@ -1,6 +1,6 @@
 # oh-key releases
 
-This repository holds the built files of oh-key, a Vietnamese typing app for Windows and macOS. It contains no source code. The source is not public yet.
+This repository holds the built files of oh-key, a Vietnamese typing app for Windows and macOS. Every release also carries the complete source code of that version as `oh-key-source.zip`.
 
 ## Download
 
@@ -13,6 +13,7 @@ Get the latest files from the [latest release](https://github.com/codepawl/oh-ke
 | [`oh-key-windows-arm64.exe`](https://github.com/codepawl/oh-key-releases/releases/latest/download/oh-key-windows-arm64.exe) | Windows on ARM |
 | [`oh-key-windows-<arch>.zip`](https://github.com/codepawl/oh-key-releases/releases/latest) | The app and the command line tool in one zip |
 | [`oh-key-macos.zip`](https://github.com/codepawl/oh-key-releases/releases/latest/download/oh-key-macos.zip) | macOS input method, Apple silicon and Intel |
+| [`oh-key-source.zip`](https://github.com/codepawl/oh-key-releases/releases/latest/download/oh-key-source.zip) | The source code of this version, to read or build yourself |
 | [`SHA256SUMS.txt`](https://github.com/codepawl/oh-key-releases/releases/latest/download/SHA256SUMS.txt) | SHA-256 checksum of every file above |
 
 ## Install on Windows
@@ -36,3 +37,9 @@ On macOS or Linux, run `shasum -a 256 -c SHA256SUMS.txt --ignore-missing`. It pr
 ## Updates
 
 oh-key checks this repository for a new release. You choose in the settings whether it installs updates, only tells you, or does nothing.
+
+## Licence
+
+oh-key is free software under the GNU General Public License, version 3 or later ([LICENSE](LICENSE)). Its charset tables come from UniKey by Pham Kim Long, under the GPL version 2 or later. The `NOTICE` file in each zip and in `oh-key-source.zip` lists the credits.
+
+You may use, share and change oh-key under those terms. The source of each version is in its release as `oh-key-source.zip`.

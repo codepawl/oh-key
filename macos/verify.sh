@@ -16,3 +16,10 @@ done
 for symbol in oh_key_session_new oh_key_session_process_key oh_key_session_finish_word; do
     nm -g "$bundle/Contents/MacOS/oh-key" | grep -q "_$symbol" && echo "symbol $symbol: present"
 done
+for notice in LICENSE NOTICE; do
+    if [ ! -s "$bundle/Contents/Resources/$notice" ]; then
+        echo "$notice is missing from the bundle" >&2
+        exit 1
+    fi
+    echo "$notice: present"
+done

@@ -95,6 +95,20 @@ jobs:
           path: target/mac/oh-key-macos.zip
           if-no-files-found: error
 
+  source:
+    # GPL: every release carries the complete source of exactly the tagged commit. git archive
+    # writes the tracked files at the tag, so the zip matches the built files.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Archive the tagged source
+        run: git archive --format=zip --prefix="oh-key-${GITHUB_REF_NAME#v}/" -o oh-key-source.zip HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oh-key-source
+          path: oh-key-source.zip
+          if-no-files-found: error
+
   package:
     # One zip per architecture, with oh-key.exe and oh-key-cli.exe at the top.
     needs: build
@@ -110,7 +124,7 @@ jobs:
             package="oh-key-windows-$arch"
             mkdir -p "$package"
             cp "builds/build-$arch/oh-key.exe" "builds/build-$arch/oh-key-cli.exe" "$package/"
-            cp LICENSE README.md "$package/"
+            cp LICENSE NOTICE README.md "$package/"
             (cd "$package" && zip -r "../$package.zip" .)
             # The updater downloads the bare exe, not the zip.
             cp "builds/build-$arch/oh-key.exe" "$package.exe"
@@ -125,7 +139,7 @@ jobs:
 
   publish:
     # The private repository's own release, with notes generated from its pull requests.
-    needs: package
+    needs: [package, source]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -136,10 +150,14 @@ jobs:
         with:
           name: oh-key-windows-assets
           path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: oh-key-source
+          path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum oh-key-windows-* | tee SHA256SUMS.txt
+          sha256sum oh-key-windows-* oh-key-source.zip | tee SHA256SUMS.txt
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,8 +194,9 @@ jobs:
     # The public releases repo gets one complete release in one step: every file and one
     # SHA256SUMS.txt, so the updater never sees a half-filled release or a missing list. A failed
     # macOS build does not block the Windows files.
-    needs: [package, macos]
-    if: ${{ !cancelled() && needs.package.result == 'success' }}
+    # Never without the source zip: binaries alone would break the GPL.
+    needs: [package, macos, source]
+    if: ${{ !cancelled() && needs.package.result == 'success' && needs.source.result == 'success' }}
     runs-on: ubuntu-latest
     # Keep RELEASES_TOKEN in this environment's secrets and give the environment required reviewers
     # and a tag rule, so a branch with a changed workflow cannot read the token.
@@ -197,10 +216,14 @@ jobs:
         with:
           name: oh-key-macos-zip
           path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: oh-key-source
+          path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum oh-key-windows-* $(ls oh-key-macos.zip 2>/dev/null) | tee SHA256SUMS.txt
+          sha256sum oh-key-windows-* oh-key-source.zip $(ls oh-key-macos.zip 2>/dev/null) | tee SHA256SUMS.txt
       - name: Create the public release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
@@ -210,7 +233,7 @@ jobs:
             exit 0
           fi
           # Written here, not copied from the private release: its notes name pull requests and people.
-          printf 'oh-key %s\n\nBuilt files and SHA256SUMS.txt. The app updates itself from this page.\n' "${TAG#v}" > release-notes.md
+          printf 'oh-key %s\n\nBuilt files, their source code (oh-key-source.zip, GPL-3.0-or-later) and SHA256SUMS.txt. The app updates itself from this page.\n' "${TAG#v}" > release-notes.md
           gh release create "$TAG" dist/* \
             --repo "$PUBLIC_REPO" \
             --title "$TAG" \

@@ -49,6 +49,8 @@ echo "== Bundle"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 cp "$work/oh-key" "$bundle/Contents/MacOS/oh-key"
 cp "$work/oh-key.icns" "$work/menu-icon.tiff" "$bundle/Contents/Resources/"
+# GPL: the licence and the notices travel with every copy of the program.
+cp "$repository/LICENSE" "$repository/NOTICE" "$bundle/Contents/Resources/"
 sed "s/__VERSION__/$version/g" "$repository/macos/Info.plist" > "$bundle/Contents/Info.plist"
 printf 'APPL????' > "$bundle/Contents/PkgInfo"
 plutil -lint "$bundle/Contents/Info.plist"

@@ -46,11 +46,19 @@ try {
     # Written here, not copied from the private release: its generated notes name pull requests,
     # authors and private links.
     $notesPath = Join-Path $workFolder 'release-notes.md'
-    $notes = "oh-key $($Tag.TrimStart('v'))`n`nBuilt files and SHA256SUMS.txt. The app updates itself from this page.`n"
+    $notes = "oh-key $($Tag.TrimStart('v'))`n`nBuilt files, their source code (oh-key-source.zip, GPL-3.0-or-later) and SHA256SUMS.txt. The app updates itself from this page.`n"
     Set-Content -Path $notesPath -Value $notes -Encoding utf8
 
     $assetPaths = (Get-ChildItem $assetFolder -File).FullName
     if (-not $assetPaths) { throw "Release $Tag has no assets." }
+    # GPL: the built files are never published without the source of the same tag.
+    if (-not (Test-Path (Join-Path $assetFolder 'oh-key-source.zip'))) {
+        throw "Release $Tag has no oh-key-source.zip, so it cannot be published."
+    }
+    $checksums = Get-Content (Join-Path $assetFolder 'SHA256SUMS.txt') -ErrorAction SilentlyContinue
+    if (-not ($checksums -match 'oh-key-source\.zip')) {
+        throw "SHA256SUMS.txt of $Tag does not list oh-key-source.zip."
+    }
 
     & gh release view $Tag --repo $publicRepo *> $null
     if ($LASTEXITCODE -eq 0) {
