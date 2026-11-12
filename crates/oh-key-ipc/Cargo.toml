@@ -1,0 +1,21 @@
+[package]
+name = "oh-key-ipc"
+description = "Settings and shared state between the parts of the oh-key app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "oh_key_ipc"
+
+[dependencies]
+oh-key-engine = { path = "../oh-key-engine" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Memory",
+] }

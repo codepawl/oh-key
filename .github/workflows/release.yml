@@ -11,8 +11,8 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  windows:
-    # One zip per architecture: the TIP DLL and the command line tool.
+  build:
+    # One build per architecture: the tray app (oh-key.exe) and the command line tool.
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -32,35 +32,55 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Test the pure crates
+      - name: Test the pure crates and the app
         if: matrix.arch == 'x64'
-        run: cargo test --workspace --exclude oh-key-windows --release --locked
-      - name: Build the TIP and the command line tool
-        run: cargo build -p oh-key-windows -p oh-key-cli --release --locked --target ${{ matrix.target }}
-      - name: Package
+        run: cargo test --workspace --release --locked
+      - name: Build the app and the command line tool
+        run: cargo build -p oh-key-app -p oh-key-cli --release --locked --target ${{ matrix.target }}
+      - name: Collect the binaries
         shell: bash
         run: |
           release_dir="target/${{ matrix.target }}/release"
-          package="oh-key-windows-${{ matrix.arch }}"
-          mkdir "$package"
-          cp "$release_dir/ohkey_tip.dll" "$package/"
-          cp "$release_dir/oh-key.exe" "$package/"
-          cp LICENSE README.md "$package/"
-          7z a "$package.zip" "./$package/*"
+          mkdir build
+          cp "$release_dir/oh-key.exe" "$release_dir/oh-key-cli.exe" build/
       - uses: actions/upload-artifact@v4
         with:
-          name: oh-key-windows-${{ matrix.arch }}
-          path: oh-key-windows-${{ matrix.arch }}.zip
+          name: build-${{ matrix.arch }}
+          path: build
+          if-no-files-found: error
+
+  package:
+    # One zip per architecture, with oh-key.exe and oh-key-cli.exe at the top.
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: builds
+      - name: Assemble the zips
+        run: |
+          for arch in x64 x86 arm64; do
+            package="oh-key-windows-$arch"
+            mkdir -p "$package"
+            cp "builds/build-$arch/oh-key.exe" "builds/build-$arch/oh-key-cli.exe" "$package/"
+            cp LICENSE README.md "$package/"
+            (cd "$package" && zip -r "../$package.zip" .)
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oh-key-windows-zips
+          path: oh-key-windows-*.zip
           if-no-files-found: error
 
   publish:
-    needs: windows
+    needs: package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: oh-key-windows-zips
           path: dist
-          merge-multiple: true
       - name: Checksums
         run: |
           cd dist

@@ -1,22 +1,15 @@
-//! `oh-key`: try the engine from a terminal and register the Windows input method.
+//! `oh-key-cli`: try the typing engine from a terminal.
 
 use oh_key_engine::{Config, Engine, InputMethod, KeyResult};
-use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 
 const USAGE: &str = "usage:
-  oh-key type [--method telex|vni|viqr|simple] <keystrokes>
-  oh-key register [path\\to\\ohkey_tip.dll]
-  oh-key unregister [path\\to\\ohkey_tip.dll]";
-
-const DLL_FILE_NAME: &str = "ohkey_tip.dll";
+  oh-key-cli type [--method telex|vni|viqr|simple] <keystrokes>";
 
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let outcome = match arguments.first().map(String::as_str) {
         Some("type") => run_type(&arguments[1..]),
-        Some("register") => run_regsvr32(&arguments[1..], false),
-        Some("unregister") => run_regsvr32(&arguments[1..], true),
         _ => Err(USAGE.to_owned()),
     };
     match outcome {
@@ -73,53 +66,6 @@ fn type_keystrokes(input_method: InputMethod, keystrokes: &str) -> String {
     }
     output.push_str(&engine.commit());
     output
-}
-
-fn run_regsvr32(arguments: &[String], unregister: bool) -> Result<(), String> {
-    let dll_path = locate_dll(arguments.first())?;
-    let mut command = Command::new("regsvr32");
-    if unregister {
-        command.arg("/u");
-    }
-    let status = command
-        .arg("/s")
-        .arg(&dll_path)
-        .status()
-        .map_err(|error| format!("could not start regsvr32: {error}"))?;
-    if status.success() {
-        println!(
-            "{} {}",
-            if unregister {
-                "unregistered"
-            } else {
-                "registered"
-            },
-            dll_path.display()
-        );
-        return Ok(());
-    }
-    Err(format!(
-        "regsvr32 failed with {status}; registering writes to HKLM, so run this from an elevated terminal"
-    ))
-}
-
-/// The DLL next to this program unless a path is given.
-fn locate_dll(explicit_path: Option<&String>) -> Result<PathBuf, String> {
-    let path = match explicit_path {
-        Some(path) => PathBuf::from(path),
-        None => {
-            let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-            let directory = executable
-                .parent()
-                .ok_or("cannot find the program folder")?;
-            directory.join(DLL_FILE_NAME)
-        }
-    };
-    if path.is_file() {
-        Ok(path)
-    } else {
-        Err(format!("{} not found", path.display()))
-    }
 }
 
 #[cfg(test)]

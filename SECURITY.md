@@ -11,7 +11,7 @@ We reply as soon as we can and say what we will do.
 ## What is in scope
 
 - Anything that sends, stores or logs typed text. oh-key must do none of these.
-- The text service DLL and how it is registered and loaded into other programs.
+- The keyboard hook in the app and what it does with the keys it sees.
 - The release files, their SHA-256 sums and `install.ps1`.
 
 ## Supported versions

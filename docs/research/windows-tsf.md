@@ -1,3 +1,5 @@
+> **Dropped on 2026-11-12.** The TSF text service (`oh-key-windows`) was removed: it was hard to get right and risky to test (a broken text service can break typing system-wide), and oh-key is now a standalone tray app that types through a keyboard hook, like Unikey. These notes are kept for reference only.
+
 # Guide: Windows TSF text input processor (TIP) in Rust for "oh-key"
 
 Provenance: items marked [V] were read in real repos or docs on 2026-11-12. Items marked [K] come from knowledge of TSF and need testing. Newest `windows` crate on crates.io is 0.62.2 [V, crates.io API]. Pin `windows = "0.62"` and `windows-core = "0.62"`.

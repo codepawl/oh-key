@@ -1,8 +1,15 @@
+# The app runs on machines without the Visual C++ runtime, so every Windows target links the
+# C runtime statically.
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]
 
-# The TSF crate crashes at startup when its tests are built for the gnu host
-# (STATUS_ACCESS_VIOLATION before main, see the GitHub issue). Use msvc locally too.
+[target.i686-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# This machine defaults to the gnu host toolchain, so the aliases pin the msvc target.
 [alias]
 check-all = "clippy --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings"
 test-all = "test --workspace --target x86_64-pc-windows-msvc"

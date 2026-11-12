@@ -3,6 +3,18 @@
 version = 4
 
 [[package]]
+name = "oh-key-app"
+version = "0.1.0"
+dependencies = [
+ "oh-key-charset",
+ "oh-key-engine",
+ "oh-key-ipc",
+ "oh-key-macro",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "oh-key-charset"
 version = "0.1.0"
 
@@ -18,20 +30,18 @@ name = "oh-key-engine"
 version = "0.1.0"
 
 [[package]]
-name = "oh-key-macro"
-version = "0.1.0"
-dependencies = [
- "oh-key-charset",
-]
-
-[[package]]
-name = "oh-key-windows"
+name = "oh-key-ipc"
 version = "0.1.0"
 dependencies = [
  "oh-key-engine",
  "windows",
- "windows-core",
- "windows-link",
+]
+
+[[package]]
+name = "oh-key-macro"
+version = "0.1.0"
+dependencies = [
+ "oh-key-charset",
 ]
 
 [[package]]

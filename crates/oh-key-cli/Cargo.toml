@@ -1,13 +1,13 @@
 [package]
 name = "oh-key-cli"
-description = "Command line tool for oh-key: try the engine and register the Windows input method"
+description = "Command line tool for oh-key: try the typing engine from a terminal"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
 [[bin]]
-name = "oh-key"
+name = "oh-key-cli"
 path = "src/main.rs"
 
 [dependencies]

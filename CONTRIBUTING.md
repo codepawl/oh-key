@@ -27,7 +27,7 @@ Engine changes come with a test: the keys typed and the text expected.
 - `crates/oh-key-charset`: charset conversion.
 - `crates/oh-key-engine`: the typing engine and spell check.
 - `crates/oh-key-macro`: macro expansion.
-- Frontends (Windows TSF, later macOS and Linux) sit in their own crates and call the engine.
+- Frontends (the Windows tray app, later macOS and Linux) sit in their own crates and call the engine.
 
 ## Style
 

@@ -1,12 +1,37 @@
-# Downloads the latest oh-key release into %LOCALAPPDATA%\Programs\oh-key. No admin rights needed.
-#   .\install.ps1            download and unpack only
-#   .\install.ps1 -Register  also register the text service (needs admin, shows a UAC prompt)
+# Installs the latest oh-key release: the tray app (oh-key.exe) and the command line tool.
+#   .\install.ps1                    install into %LOCALAPPDATA%\Programs\oh-key and start the app
+#   .\install.ps1 -StartAtSignIn     also start the app every time you sign in
+#
+# No administrator rights are needed: everything goes into your own profile.
 #
 # The repository is private, so this needs the GitHub CLI (https://cli.github.com) signed in
 # with `gh auth login`. Once the repository is public the same release files work without it.
-param([switch]$Register)
+param(
+    [switch]$StartAtSignIn
+)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+
+$installFolder = Join-Path $env:LOCALAPPDATA 'Programs\oh-key'
+$runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+
+function Stop-RunningApp {
+    Get-Process -Name 'oh-key' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -like "$installFolder\*" -or $_.Path -like "$env:ProgramFiles\oh-key\*" } |
+        Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 300
+}
+
+# Points the Run value at the installed exe. An existing value is refreshed even without the
+# switch, so the path never goes stale when the exe moves.
+function Set-StartAtSignIn {
+    $command = '"' + (Join-Path $installFolder 'oh-key.exe') + '"'
+    Set-ItemProperty -Path $runKey -Name 'oh-key' -Value $command
+}
+
+function Test-StartAtSignInEnabled {
+    $null -ne (Get-ItemProperty -Path $runKey -Name 'oh-key' -ErrorAction SilentlyContinue)
+}
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'The GitHub CLI (gh) is required while the repository is private. Install it from https://cli.github.com, run "gh auth login", then run this script again.'
@@ -19,36 +44,34 @@ $architecture = switch ($env:PROCESSOR_ARCHITECTURE) {
     default { throw "Unsupported processor architecture: $($env:PROCESSOR_ARCHITECTURE)" }
 }
 
-$installFolder = Join-Path $env:LOCALAPPDATA 'Programs\oh-key'
-$downloadFolder = Join-Path ([IO.Path]::GetTempPath()) ('oh-key-' + [Guid]::NewGuid())
-New-Item -ItemType Directory -Path $downloadFolder | Out-Null
+$workFolder = Join-Path ([IO.Path]::GetTempPath()) ('oh-key-' + [Guid]::NewGuid())
+$stagedFolder = Join-Path $workFolder 'files'
+New-Item -ItemType Directory -Path $stagedFolder | Out-Null
 try {
     $archiveName = "oh-key-windows-$architecture.zip"
     Write-Host "Downloading the latest $archiveName..."
-    gh release download --repo codepawl/oh-key --pattern $archiveName --pattern 'SHA256SUMS.txt' --dir $downloadFolder
+    gh release download --repo codepawl/oh-key --pattern $archiveName --pattern 'SHA256SUMS.txt' --dir $workFolder
     if ($LASTEXITCODE -ne 0) { throw 'gh release download failed.' }
 
-    $archivePath = Join-Path $downloadFolder $archiveName
-    $checksumLine = Get-Content (Join-Path $downloadFolder 'SHA256SUMS.txt') | Where-Object { $_ -match [regex]::Escape($archiveName) }
+    $archivePath = Join-Path $workFolder $archiveName
+    $checksumLine = Get-Content (Join-Path $workFolder 'SHA256SUMS.txt') | Where-Object { $_ -match [regex]::Escape($archiveName) }
     $expected = ($checksumLine -split '\s+')[0]
     $actual = (Get-FileHash $archivePath -Algorithm SHA256).Hash
     if (-not $expected -or $expected -ne $actual) {
         throw "Checksum mismatch: expected $expected, got $actual"
     }
+    Expand-Archive $archivePath -DestinationPath $stagedFolder -Force
 
+    Stop-RunningApp
     New-Item -ItemType Directory -Path $installFolder -Force | Out-Null
-    Expand-Archive $archivePath -DestinationPath $installFolder -Force
+    foreach ($fileName in 'oh-key.exe', 'oh-key-cli.exe') {
+        Copy-Item (Join-Path $stagedFolder $fileName) (Join-Path $installFolder $fileName) -Force
+    }
 }
 finally {
-    Remove-Item $downloadFolder -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item $workFolder -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-$dllPath = Join-Path $installFolder 'ohkey_tip.dll'
-if ($Register) {
-    Start-Process regsvr32.exe -ArgumentList "/s `"$dllPath`"" -Verb RunAs -Wait
-    Write-Host 'oh-key is registered. Add it under Settings > Time & language > Language & region > Vietnamese > Keyboards.'
-}
-else {
-    Write-Host "oh-key is unpacked in $installFolder."
-    Write-Host "To register the text service, run again with -Register, or run as admin: regsvr32 `"$dllPath`""
-}
+if ($StartAtSignIn -or (Test-StartAtSignInEnabled)) { Set-StartAtSignIn }
+Start-Process (Join-Path $installFolder 'oh-key.exe')
+Write-Host "oh-key is installed in $installFolder and running. Click the V in the tray to open its panel."
