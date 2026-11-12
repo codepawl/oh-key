@@ -195,6 +195,7 @@ mod e2e {
         });
         let options = HookOptions {
             accept_foreign_injected_keys: true,
+            ..HookOptions::default()
         };
         let Some(hook_handle) = hook::start(provider, Box::new(|| {}), options) else {
             eprintln!("hook_e2e: the hook could not start");

@@ -5,6 +5,7 @@ repository="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PATH="$HOME/.cargo/bin:$PATH"
 bundle="${OH_KEY_MAC_OUTPUT:-$repository/target/mac}/oh-key.app"
 
+bash "$repository/macos/test-editor.sh" 2>&1 | grep -v -E '^pass| Compiling '
 cargo test --manifest-path "$repository/Cargo.toml" -p oh-key-ffi 2>&1 | grep -E "^test result|FAILED|^error"
 plutil -lint "$bundle/Contents/Info.plist"
 codesign --verify --strict --verbose=2 "$bundle"

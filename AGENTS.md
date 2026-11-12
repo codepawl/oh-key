@@ -28,6 +28,8 @@ cargo test-all    # tests, msvc target
 
 The aliases in `.cargo/config.toml` pin the msvc target: this machine defaults to the gnu host. The hook logic is checked headless by `cargo test-all` (the hook suite cases replayed through `Session` into a simulated text field). Never run `hook_e2e` or `hook_suite` on the owner's machine: they open a window, take the foreground and steal focus while the owner works (An, 2026-11-12). They run in CI (`hook-e2e` job on windows-latest); run them locally only when An asks.
 
+Lag (keys repeated, tones missing under load): `hook_headless.rs` models a loaded machine (one input queue shared by the keyboard and our `SendInput` batches, late callbacks, blocked input) and runs headless in `cargo test-all`; `Mitigations` switches each fix off to show the symptom (`legacy_*` tests fail on the old logic, `fixed_*` pass). The `hook-e2e` CI job runs `hook_suite` under stress with `OHKEY_TEST_HOOK_DELAY_MS` / `OHKEY_TEST_HOOK_DELAY_EVERY` (slow callbacks), `OHKEY_TEST_CPU_STRESS_THREADS` (busy cores) and `OHKEY_DISABLE_MITIGATIONS=1` (negative control). Never run these on a developer PC.
+
 CI runs the pure crates on Windows, Linux and macOS, so keep them free of platform code. Engine changes need a typing test (keys in, text out).
 
 ## Rules

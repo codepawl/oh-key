@@ -9,8 +9,8 @@
 //! The first half of the file is pure (the diff, the key decision, the typing session) and is
 //! unit tested. The second half is the Windows glue.
 
-use std::cell::RefCell;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::cell::{Cell, RefCell};
+use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread::JoinHandle;
 
@@ -19,21 +19,31 @@ use oh_key_ipc::{Settings, SharedState, ToggleHotkey, load_settings, macros_path
 use oh_key_macro::MacroTable;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::System::Threading::{
-    GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+use windows::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, REG_DWORD, REG_VALUE_TYPE, RegCloseKey,
+    RegOpenKeyExW, RegQueryValueExW,
 };
+use windows::Win32::System::SystemInformation::GetTickCount;
+use windows::Win32::System::Threading::{
+    GetCurrentProcess, GetCurrentThread, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+    PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+    PROCESS_POWER_THROTTLING_STATE, PROCESS_QUERY_LIMITED_INFORMATION, ProcessPowerThrottling,
+    QueryFullProcessImageNameW, SetProcessInformation, SetThreadPriority,
+    THREAD_PRIORITY_TIME_CRITICAL,
+};
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
-    KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, ToUnicodeEx, VIRTUAL_KEY,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, INPUT, INPUT_0,
+    INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    LASTINPUTINFO, SendInput, ToUnicodeEx, VIRTUAL_KEY,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-    HHOOK, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetWindowsHookExW,
-    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_QUIT,
-    WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
+    CallNextHookEx, DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW,
+    GetWindowThreadProcessId, HHOOK, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW,
+    PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
 };
-use windows::core::{Owned, PWSTR};
+use windows::core::{Owned, PWSTR, w};
 
 const VK_BACK: u32 = 0x08;
 const VK_TAB: u32 = 0x09;
@@ -59,6 +69,9 @@ const LAST_FUNCTION_KEY: u32 = 0x87;
 
 /// Stamped on every key the hook sends, so it can tell its own output from anyone else's.
 pub const OWN_OUTPUT_MARKER: usize = 0x6F68_6B79;
+/// Stamped on the key pair that only cancels the menu bar: ignored like our other output, but
+/// it is not part of an edit, so it must never count as the echo of one.
+const OWN_MENU_CANCEL_MARKER: usize = 0x6F68_6B7A;
 const LLKHF_INJECTED: u32 = 0x10;
 
 // ---------------------------------------------------------------------------------------
@@ -96,6 +109,8 @@ pub enum Stroke {
     Backspace,
     /// One UTF-16 unit, sent as a Unicode key event.
     Unit(u16),
+    /// A key pressed again as it was (Enter, Tab, Escape), after it had to wait for an edit.
+    Key(u16),
 }
 
 pub fn strokes_for(edit: &TextEdit) -> Vec<Stroke> {
@@ -131,7 +146,9 @@ pub fn should_ignore_event(
     extra_info: usize,
     accept_foreign_injected: bool,
 ) -> bool {
-    extra_info == OWN_OUTPUT_MARKER || (injected && !accept_foreign_injected)
+    extra_info == OWN_OUTPUT_MARKER
+        || extra_info == OWN_MENU_CANCEL_MARKER
+        || (injected && !accept_foreign_injected)
 }
 
 /// Everything the decision needs about one key press.
@@ -367,8 +384,97 @@ pub fn hook_is_active(vietnamese: bool, foreground_exe: &str, excluded_apps: &[S
 
 /// Where the key flow sends what it types: `SendInput` in the hook, a simulated field in tests.
 pub trait OutputSink {
-    fn send_edit(&mut self, edit: &TextEdit);
+    /// Returns how many key events went in; the caller compares it with `edit_event_count`.
+    fn send_edit(&mut self, edit: &TextEdit) -> usize;
     fn cancel_menu_activation(&mut self);
+    /// Sends one key press and release again; returns how many events went in.
+    fn send_key(&mut self, virtual_key: u32) -> usize {
+        let _ = virtual_key;
+        0
+    }
+    /// A monotonic clock for the budget and the echo deadline. Tests that do not model
+    /// time keep the default.
+    fn now_milliseconds(&self) -> u64 {
+        0
+    }
+}
+
+/// How many key events `send_edit` puts in for this edit (a press and a release per stroke).
+pub fn edit_event_count(edit: &TextEdit) -> usize {
+    if edit.is_empty() {
+        return 0;
+    }
+    let text_units = edit.text.encode_utf16().count();
+    let guard_strokes = if edit.backspaces == 0 { 0 } else { 2 };
+    (edit.backspaces + text_units + guard_strokes) * 2
+}
+
+/// The switches for the fixes against the lag symptoms. All on in the app; the tests and the
+/// suite's negative control turn them off to show the symptom.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mitigations {
+    /// Keys that arrive while an earlier edit is still on its way wait for it to land.
+    pub echo_gating: bool,
+    /// An edit started later than this many milliseconds after the key event began is not
+    /// sent, because Windows may already have passed the key on.
+    pub callback_budget_milliseconds: Option<u64>,
+    /// Too many edits in a short time, or many edits without a new key, mean a loop (a key
+    /// that seems stuck, our own output read as typing): the flow stops editing for a while.
+    pub circuit_breaker: bool,
+}
+
+impl Mitigations {
+    #[allow(dead_code)]
+    pub fn none() -> Self {
+        Mitigations {
+            echo_gating: false,
+            callback_budget_milliseconds: None,
+            circuit_breaker: false,
+        }
+    }
+}
+
+impl Default for Mitigations {
+    fn default() -> Self {
+        Mitigations {
+            echo_gating: true,
+            callback_budget_milliseconds: Some(DEFAULT_CALLBACK_BUDGET_MILLISECONDS),
+            circuit_breaker: true,
+        }
+    }
+}
+
+/// Typing never produces more than about 30 edits a second; this many in one window is a loop.
+const BREAKER_WINDOW_MILLISECONDS: u64 = 1000;
+const BREAKER_MAXIMUM_EDITS_PER_WINDOW: u32 = 100;
+/// One key press makes one edit, a replay after lag a few more; this many with no new key is a loop.
+const BREAKER_MAXIMUM_EDITS_WITHOUT_NEW_KEY: u32 = 32;
+/// While the breaker is open the hook only passes keys through.
+const BREAKER_OPEN_MILLISECONDS: u64 = 1000;
+
+/// Windows drops a low-level hook whose callback runs past `LowLevelHooksTimeout` (300 ms by
+/// default). Half of it, at most this much, leaves room for scheduling delays after the send.
+const DEFAULT_CALLBACK_BUDGET_MILLISECONDS: u64 = 120;
+const MAXIMUM_CALLBACK_BUDGET_MILLISECONDS: u64 = 150;
+const MINIMUM_CALLBACK_BUDGET_MILLISECONDS: u64 = 20;
+
+pub fn budget_for_timeout(timeout_milliseconds: u64) -> u64 {
+    (timeout_milliseconds / 2).clamp(
+        MINIMUM_CALLBACK_BUDGET_MILLISECONDS,
+        MAXIMUM_CALLBACK_BUDGET_MILLISECONDS,
+    )
+}
+
+/// How long keys wait for our own edit to come back through the hook before the flow gives up
+/// on it (an event was lost) and lets the keys through raw. A busy machine delays the echo by
+/// the callbacks queued before it, so this is generous.
+const ECHO_DEADLINE_MILLISECONDS: u64 = 250;
+
+/// A key that arrived while an earlier edit was still on its way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DeferredKey {
+    virtual_key: u32,
+    input: KeyInput,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -390,9 +496,27 @@ pub struct KeyFlow {
     excluded_apps: Vec<String>,
     foreground_exe: String,
     active: bool,
-    /// The key whose press was swallowed, so its release is swallowed too.
-    swallowed_key: Option<u32>,
+    /// The keys whose press was swallowed, so their release is swallowed too.
+    swallowed_keys: Vec<u32>,
+    mitigations: Mitigations,
+    event_started_milliseconds: u64,
+    /// Key events of our own edits that have not come back through the hook yet.
+    echoes_outstanding: usize,
+    echo_started_milliseconds: u64,
+    deferred_keys: Vec<DeferredKey>,
+    late_edits: usize,
+    breaker_open_until_milliseconds: u64,
+    breaker_window_started_milliseconds: u64,
+    edits_in_breaker_window: u32,
+    edits_since_new_key: u32,
+    breaker_trips: usize,
+    /// Replaying keys that waited: each was a key press of its own, not a loop.
+    replaying_deferred_keys: bool,
 }
+
+/// More than a handful of keys at once is not typing; the capacity keeps the key path free of
+/// allocations.
+const KEY_BUFFER_CAPACITY: usize = 16;
 
 impl KeyFlow {
     pub fn new(config: Config, toggle_hotkey: ToggleHotkey) -> Self {
@@ -404,8 +528,99 @@ impl KeyFlow {
             excluded_apps: Vec::new(),
             foreground_exe: String::new(),
             active: false,
-            swallowed_key: None,
+            swallowed_keys: Vec::with_capacity(KEY_BUFFER_CAPACITY),
+            mitigations: Mitigations::default(),
+            event_started_milliseconds: 0,
+            echoes_outstanding: 0,
+            echo_started_milliseconds: 0,
+            deferred_keys: Vec::with_capacity(KEY_BUFFER_CAPACITY),
+            late_edits: 0,
+            breaker_open_until_milliseconds: 0,
+            breaker_window_started_milliseconds: 0,
+            edits_in_breaker_window: 0,
+            edits_since_new_key: 0,
+            breaker_trips: 0,
+            replaying_deferred_keys: false,
         }
+    }
+
+    /// How many times the circuit breaker stopped a loop.
+    #[allow(dead_code)]
+    #[cfg(test)]
+    pub fn breaker_trips(&self) -> usize {
+        self.breaker_trips
+    }
+
+    /// The system passed this swallowed key on after all (the callback ran past the hook
+    /// timeout), so its release must pass too, or the application would see a held key.
+    pub fn release_swallow(&mut self, virtual_key: u32) {
+        self.take_swallowed(virtual_key);
+        // A key that waited and was passed on by the system must not be typed again by the replay.
+        let waiting_position = self
+            .deferred_keys
+            .iter()
+            .rposition(|key| key.virtual_key == virtual_key);
+        if let Some(position) = waiting_position {
+            self.deferred_keys.remove(position);
+        }
+    }
+
+    fn breaker_is_open(&self, sink: &impl OutputSink) -> bool {
+        sink.now_milliseconds() < self.breaker_open_until_milliseconds
+    }
+
+    fn count_edit_for_breaker(&mut self, sink: &mut impl OutputSink) {
+        if !self.mitigations.circuit_breaker {
+            return;
+        }
+        let now = sink.now_milliseconds();
+        if now.saturating_sub(self.breaker_window_started_milliseconds)
+            > BREAKER_WINDOW_MILLISECONDS
+        {
+            self.breaker_window_started_milliseconds = now;
+            self.edits_in_breaker_window = 0;
+        }
+        self.edits_in_breaker_window += 1;
+        if !self.replaying_deferred_keys {
+            self.edits_since_new_key += 1;
+        }
+        let looping = self.edits_in_breaker_window > BREAKER_MAXIMUM_EDITS_PER_WINDOW
+            || self.edits_since_new_key > BREAKER_MAXIMUM_EDITS_WITHOUT_NEW_KEY;
+        if looping {
+            self.trip_breaker(now, sink);
+        }
+    }
+
+    /// Stops editing: the keys that waited are typed as they are, the word is dropped and the
+    /// flow passes keys through until the breaker closes. Held-key pairing stays intact.
+    fn trip_breaker(&mut self, now: u64, sink: &mut impl OutputSink) {
+        self.breaker_trips += 1;
+        self.breaker_open_until_milliseconds = now + BREAKER_OPEN_MILLISECONDS;
+        self.edits_in_breaker_window = 0;
+        self.edits_since_new_key = 0;
+        self.echoes_outstanding = 0;
+        self.session.reset();
+        for index in 0..self.deferred_keys.len() {
+            let edit = raw_key_edit(self.deferred_keys[index].input);
+            sink.send_edit(&edit);
+        }
+        self.deferred_keys.clear();
+    }
+
+    pub fn set_mitigations(&mut self, mitigations: Mitigations) {
+        self.mitigations = mitigations;
+    }
+
+    /// Edits refused because the callback had used up its budget.
+    #[allow(dead_code)]
+    #[cfg(test)]
+    pub fn late_edits(&self) -> usize {
+        self.late_edits
+    }
+
+    /// Called first for every hook callback, with the clock reading at its start.
+    pub fn begin_event(&mut self, now_milliseconds: u64) {
+        self.event_started_milliseconds = now_milliseconds;
     }
 
     #[cfg(test)]
@@ -438,10 +653,28 @@ impl KeyFlow {
         }
     }
 
-    /// The foreground window changed: drop the word, the chord and the pending release.
+    /// The foreground window changed: drop the word and the chord. A pending release stays,
+    /// because the application that gets it never saw the press.
+    /// Keys that still waited were typed for the window left behind; they are dropped rather
+    /// than typed into the new one.
     pub fn deactivate(&mut self) {
         self.active = false;
-        self.swallowed_key = None;
+        self.chord = ToggleChordTracker::default();
+        self.session.reset();
+        self.deferred_keys.clear();
+        self.echoes_outstanding = 0;
+    }
+
+    /// The hook was reinstalled after a lost state: no held key can be trusted. Keys that were
+    /// swallowed while they waited for an echo that will not come are typed as they are.
+    pub fn forget_held_keys(&mut self, sink: &mut impl OutputSink) {
+        self.swallowed_keys.clear();
+        for index in 0..self.deferred_keys.len() {
+            let key = self.deferred_keys[index];
+            self.send_raw(key, sink);
+        }
+        self.deferred_keys.clear();
+        self.echoes_outstanding = 0;
         self.chord = ToggleChordTracker::default();
         self.session.reset();
     }
@@ -451,9 +684,27 @@ impl KeyFlow {
         self.refresh_active();
     }
 
+    fn remember_swallowed(&mut self, virtual_key: u32) {
+        if !self.swallowed_keys.contains(&virtual_key) {
+            self.swallowed_keys.push(virtual_key);
+        }
+    }
+
+    fn take_swallowed(&mut self, virtual_key: u32) -> bool {
+        let Some(position) = self
+            .swallowed_keys
+            .iter()
+            .position(|key| *key == virtual_key)
+        else {
+            return false;
+        };
+        self.swallowed_keys.swap_remove(position);
+        true
+    }
+
     /// The Ctrl+Shift chord completes on release; a swallowed key's release is swallowed too.
     pub fn key_up(&mut self, virtual_key: u32) -> KeyOutcome {
-        let swallow = self.swallowed_key.take() == Some(virtual_key);
+        let swallow = self.take_swallowed(virtual_key);
         let completed = self.chord.key_up(virtual_key);
         let toggled = completed && self.toggle_hotkey == ToggleHotkey::CtrlShift;
         if toggled {
@@ -472,35 +723,234 @@ impl KeyFlow {
         sink: &mut impl OutputSink,
     ) -> KeyOutcome {
         self.chord.key_down(virtual_key);
+        // A press that is not swallowed again below must not leave an old pending release
+        // behind, or the release of a key the application saw pressed would be swallowed.
+        self.take_swallowed(virtual_key);
+        self.edits_since_new_key = 0;
         if is_alt_z_press(self.toggle_hotkey, virtual_key, alt_held, ctrl_held) {
             self.toggle_mode();
-            self.swallowed_key = Some(virtual_key);
+            self.remember_swallowed(virtual_key);
             sink.cancel_menu_activation();
             return KeyOutcome {
                 swallow: true,
                 toggled: true,
             };
         }
-        if !self.active {
+        if !self.active || self.breaker_is_open(sink) {
             return KeyOutcome::default();
         }
-        let press = read_press();
-        let swallow = match self.session.handle(classify_key(&press)) {
-            Verdict::PassThrough => false,
-            Verdict::EditThenPass(edit) => {
-                sink.send_edit(&edit);
-                false
-            }
-            Verdict::Swallow(edit) => {
-                sink.send_edit(&edit);
-                self.swallowed_key = Some(virtual_key);
-                true
-            }
-        };
+        let input = classify_key(&read_press());
+        if self.hold_back_for_edit_in_flight(virtual_key, input, sink) {
+            return KeyOutcome {
+                swallow: true,
+                toggled: false,
+            };
+        }
+        let verdict = self.session.handle(input);
+        let swallow = self.carry_out(virtual_key, verdict, sink);
         KeyOutcome {
             swallow,
             toggled: false,
         }
+    }
+
+    fn carry_out(
+        &mut self,
+        virtual_key: u32,
+        verdict: Verdict,
+        sink: &mut impl OutputSink,
+    ) -> bool {
+        match verdict {
+            Verdict::PassThrough => false,
+            Verdict::EditThenPass(edit) => {
+                self.deliver_edit(&edit, sink);
+                false
+            }
+            Verdict::Swallow(edit) => {
+                let delivered = self.deliver_edit(&edit, sink);
+                if delivered {
+                    self.remember_swallowed(virtual_key);
+                }
+                delivered
+            }
+        }
+    }
+
+    /// Sends the edit unless the callback is out of time. Returns whether the edit went in
+    /// whole. When it did not, the word restarts and the key stands as the user typed it.
+    fn deliver_edit(&mut self, edit: &TextEdit, sink: &mut impl OutputSink) -> bool {
+        if self.over_budget(sink) {
+            self.late_edits += 1;
+            self.session.reset();
+            return false;
+        }
+        self.send_counted(edit, sink)
+    }
+
+    fn over_budget(&self, sink: &impl OutputSink) -> bool {
+        let Some(budget) = self.mitigations.callback_budget_milliseconds else {
+            return false;
+        };
+        let elapsed = sink
+            .now_milliseconds()
+            .saturating_sub(self.event_started_milliseconds);
+        elapsed > budget
+    }
+
+    fn send_counted(&mut self, edit: &TextEdit, sink: &mut impl OutputSink) -> bool {
+        let expected = edit_event_count(edit);
+        let sent = sink.send_edit(edit);
+        self.count_edit_for_breaker(sink);
+        if sent > 0 {
+            if self.echoes_outstanding == 0 {
+                self.echo_started_milliseconds = sink.now_milliseconds();
+            }
+            self.echoes_outstanding += sent;
+        }
+        if sent == expected {
+            return true;
+        }
+        self.session.reset();
+        false
+    }
+
+    /// A key typed while our earlier edit is still on its way would be measured against text
+    /// that is not on screen yet. Characters, backspaces and Enter, Tab and Escape wait,
+    /// swallowed, until the edit has come back through the hook. Any other key ends the wait:
+    /// the keys that waited go through the engine now and the key reaches the application.
+    fn hold_back_for_edit_in_flight(
+        &mut self,
+        virtual_key: u32,
+        input: KeyInput,
+        sink: &mut impl OutputSink,
+    ) -> bool {
+        let waiting = self.echoes_outstanding > 0 || !self.deferred_keys.is_empty();
+        if !self.mitigations.echo_gating || !waiting || input == KeyInput::Ignore {
+            return false;
+        }
+        // Measured at the start of this callback: time this callback spends itself is not time
+        // the echo was missing, since the echo is queued behind it.
+        let waited = self
+            .event_started_milliseconds
+            .saturating_sub(self.echo_started_milliseconds);
+        if waited > ECHO_DEADLINE_MILLISECONDS {
+            return self.stop_waiting_for_lost_echo(virtual_key, input, sink);
+        }
+        if self.deferred_keys.len() >= KEY_BUFFER_CAPACITY {
+            // Held-key autorepeat: stay within the capacity, so the key path never allocates.
+            self.replay_deferred_keys(sink);
+        }
+        if can_wait_for_echo(input) {
+            self.deferred_keys.push(DeferredKey { virtual_key, input });
+            self.remember_swallowed(virtual_key);
+            return true;
+        }
+        false
+    }
+
+    /// Our edit never came back (an event was lost): what waits is typed as it is, the word
+    /// starts over, and a character that arrives now joins the ones typed raw.
+    fn stop_waiting_for_lost_echo(
+        &mut self,
+        virtual_key: u32,
+        input: KeyInput,
+        sink: &mut impl OutputSink,
+    ) -> bool {
+        self.echoes_outstanding = 0;
+        if self.deferred_keys.is_empty() {
+            return false;
+        }
+        let joins_the_raw_keys = matches!(input, KeyInput::Character(_) | KeyInput::Backspace);
+        if joins_the_raw_keys {
+            self.deferred_keys.push(DeferredKey { virtual_key, input });
+            self.remember_swallowed(virtual_key);
+        }
+        self.session.reset();
+        for index in 0..self.deferred_keys.len() {
+            let key = self.deferred_keys[index];
+            self.send_raw(key, sink);
+        }
+        self.deferred_keys.clear();
+        joins_the_raw_keys
+    }
+
+    /// One of our own key events came back through the hook. When the last one of the batch
+    /// lands, the keys that waited go through the engine, in order.
+    pub fn on_own_echo(&mut self, sink: &mut impl OutputSink) {
+        self.echoes_outstanding = self.echoes_outstanding.saturating_sub(1);
+        if self.echoes_outstanding == 0 {
+            self.replay_deferred_keys(sink);
+        }
+    }
+
+    /// The engine's text stays right when the keys go through it in order, because it measures
+    /// each edit against what the earlier edits will leave on screen.
+    fn replay_deferred_keys(&mut self, sink: &mut impl OutputSink) {
+        self.replaying_deferred_keys = true;
+        // Sending can trip the circuit breaker, which empties the list under this loop.
+        for index in 0..self.deferred_keys.len() {
+            let Some(key) = self.deferred_keys.get(index).copied() else {
+                break;
+            };
+            self.replay_deferred(key, sink);
+        }
+        self.replaying_deferred_keys = false;
+        self.deferred_keys.clear();
+    }
+
+    fn replay_deferred(&mut self, key: DeferredKey, sink: &mut impl OutputSink) {
+        match self.session.handle(key.input) {
+            Verdict::PassThrough => self.send_raw(key, sink),
+            Verdict::Swallow(edit) => {
+                self.send_counted(&edit, sink);
+            }
+            Verdict::EditThenPass(edit) => {
+                self.send_counted(&edit, sink);
+                self.send_raw(key, sink);
+            }
+        }
+    }
+
+    /// The key itself, as the user pressed it.
+    fn send_raw(&mut self, key: DeferredKey, sink: &mut impl OutputSink) {
+        match key.input {
+            KeyInput::Character(_) | KeyInput::Backspace => {
+                self.send_counted(&raw_key_edit(key.input), sink);
+            }
+            _ => self.send_key_counted(key.virtual_key, sink),
+        }
+    }
+
+    fn send_key_counted(&mut self, virtual_key: u32, sink: &mut impl OutputSink) {
+        let sent = sink.send_key(virtual_key);
+        if sent > 0 {
+            if self.echoes_outstanding == 0 {
+                self.echo_started_milliseconds = sink.now_milliseconds();
+            }
+            self.echoes_outstanding += sent;
+        }
+    }
+}
+
+/// Whether a key may wait for the edit before it. Every key but the ones the hook ignores:
+/// a shortcut or an arrow that passed at once would act before the text it follows has landed.
+/// The key is sent again after the edit, with the modifiers still held at that moment.
+fn can_wait_for_echo(input: KeyInput) -> bool {
+    !matches!(input, KeyInput::Ignore)
+}
+
+/// The key itself as an edit, for a key that was held back.
+fn raw_key_edit(input: KeyInput) -> TextEdit {
+    match input {
+        KeyInput::Character(character) => TextEdit {
+            backspaces: 0,
+            text: character.to_string(),
+        },
+        KeyInput::Backspace => TextEdit {
+            backspaces: 1,
+            text: String::new(),
+        },
+        _ => TextEdit::default(),
     }
 }
 
@@ -532,6 +982,12 @@ pub struct HookOptions {
     /// Also handle keys that other programs injected. Off in the app; the end-to-end
     /// example turns it on because `SendInput` is how it types.
     pub accept_foreign_injected_keys: bool,
+    /// The fixes against the lag symptoms; the suite switches them off as a negative control.
+    pub mitigations: Mitigations,
+    /// Test only: make the callback sleep this long before it decides, on every Nth key event
+    /// (zero for either value means never). Reproduces a loaded machine.
+    pub stress_delay_milliseconds: u32,
+    pub stress_every_keys: u32,
 }
 
 type MacroList = Vec<(String, String)>;
@@ -671,13 +1127,29 @@ const EXE_NAME_CACHE_LIMIT: usize = 64;
 struct SendInputSink;
 
 impl OutputSink for SendInputSink {
-    fn send_edit(&mut self, edit: &TextEdit) {
-        send_edit(edit);
+    fn send_edit(&mut self, edit: &TextEdit) -> usize {
+        send_edit(edit)
     }
 
     fn cancel_menu_activation(&mut self) {
         cancel_menu_activation();
     }
+
+    fn send_key(&mut self, virtual_key: u32) -> usize {
+        let stroke = Stroke::Key(virtual_key as u16);
+        let events = [keyboard_event(stroke, false), keyboard_event(stroke, true)];
+        unsafe { SendInput(&events, size_of::<INPUT>() as i32) as usize }
+    }
+
+    fn now_milliseconds(&self) -> u64 {
+        monotonic_milliseconds()
+    }
+}
+
+fn monotonic_milliseconds() -> u64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    let start = START.get_or_init(std::time::Instant::now);
+    start.elapsed().as_millis() as u64
 }
 
 struct HookState {
@@ -689,6 +1161,57 @@ struct HookState {
     foreground: HWND,
     /// Program names by process id, so a window switch back to a known program asks nothing.
     exe_names: std::collections::HashMap<u32, String>,
+    stress_counter: u32,
+}
+
+/// `LowLevelHooksTimeout` in the current user's desktop settings, when it is set.
+fn low_level_hooks_timeout_milliseconds() -> Option<u64> {
+    let mut key = HKEY::default();
+    let opened = unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Control Panel\\Desktop"),
+            None,
+            KEY_QUERY_VALUE,
+            &mut key,
+        )
+    };
+    if opened.is_err() {
+        return None;
+    }
+    let mut value = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    let mut value_type = REG_VALUE_TYPE::default();
+    let queried = unsafe {
+        RegQueryValueExW(
+            key,
+            w!("LowLevelHooksTimeout"),
+            None,
+            Some(&mut value_type),
+            Some((&mut value as *mut u32).cast::<u8>()),
+            Some(&mut size),
+        )
+    };
+    let _ = unsafe { RegCloseKey(key) };
+    (queried.is_ok() && value_type == REG_DWORD).then_some(u64::from(value))
+}
+
+/// The budget the user's own timeout allows, never above the configured one.
+fn mitigations_for_this_machine(configured: Mitigations) -> Mitigations {
+    let timeout = low_level_hooks_timeout_milliseconds();
+    let cutoff =
+        late_swallow_cutoff_for_timeout(timeout.unwrap_or(DEFAULT_HOOKS_TIMEOUT_MILLISECONDS));
+    LATE_SWALLOW_IGNORED_MILLISECONDS.store(cutoff, Ordering::Relaxed);
+    let Some(configured_budget) = configured.callback_budget_milliseconds else {
+        return configured;
+    };
+    let allowed = timeout.map_or(configured_budget, |timeout| {
+        budget_for_timeout(timeout).min(configured_budget)
+    });
+    Mitigations {
+        callback_budget_milliseconds: Some(allowed),
+        ..configured
+    }
 }
 
 thread_local! {
@@ -711,7 +1234,11 @@ impl HookState {
             config: inputs.engine,
             foreground: HWND::default(),
             exe_names: std::collections::HashMap::new(),
+            stress_counter: 0,
         };
+        state
+            .flow
+            .set_mitigations(mitigations_for_this_machine(options.mitigations));
         state.apply_inputs(inputs);
         state.follow_foreground();
         state
@@ -720,12 +1247,18 @@ impl HookState {
     /// Runs first in every key event. A window switch drops the word and resolves the new
     /// window's program; the provider says whether the settings or the mode changed.
     fn catch_up(&mut self) {
-        if unsafe { GetForegroundWindow() } != self.foreground {
+        let current = unsafe { GetForegroundWindow() };
+        // Focus passes through no window at all while windows switch under load; that is not
+        // a new program, and resetting the word there would restart it mid-syllable.
+        if !current.is_invalid() && current != self.foreground {
             FOREGROUND_CHANGES.fetch_add(1, Ordering::Relaxed);
             self.flow.deactivate();
             self.follow_foreground();
         }
         if let Some(inputs) = (self.provider)() {
+            // The settings changed (or the session came back): read the timeout again too.
+            self.flow
+                .set_mitigations(mitigations_for_this_machine(self.options.mitigations));
             self.apply_inputs(inputs);
         }
     }
@@ -752,7 +1285,7 @@ impl HookState {
     }
 
     /// Asking Windows for a program name costs a few system calls, so a known process id is
-    /// answered from memory. A failed lookup is not remembered.
+    /// answered from memory.
     fn exe_name_of_foreground(&mut self) -> String {
         let mut process_id = 0u32;
         unsafe { GetWindowThreadProcessId(self.foreground, Some(&mut process_id)) };
@@ -762,9 +1295,9 @@ impl HookState {
         if let Some(known) = self.exe_names.get(&process_id) {
             return known.clone();
         }
-        let Some(exe_name) = process_exe_name(process_id) else {
-            return String::new();
-        };
+        // A failed lookup (an elevated window, a process under memory pressure) is remembered
+        // too: asking again on every key would put the slow calls back on the key path.
+        let exe_name = process_exe_name(process_id).unwrap_or_default();
         if self.exe_names.len() >= EXE_NAME_CACHE_LIMIT {
             self.exe_names.clear();
         }
@@ -779,9 +1312,26 @@ impl HookState {
         }
     }
 
+    /// The stress knob of the end-to-end suite: a callback that runs long, on every Nth key.
+    fn sleep_when_stressed(&mut self) {
+        let every = self.options.stress_every_keys;
+        let delay = self.options.stress_delay_milliseconds;
+        if every == 0 || delay == 0 {
+            return;
+        }
+        self.stress_counter += 1;
+        if self.stress_counter.is_multiple_of(every) {
+            std::thread::sleep(std::time::Duration::from_millis(u64::from(delay)));
+        }
+    }
+
     /// Returns whether the event is swallowed.
     fn handle_event(&mut self, message: u32, event: &KBDLLHOOKSTRUCT) -> bool {
         let injected = event.flags.0 & LLKHF_INJECTED != 0;
+        self.flow.begin_event(monotonic_milliseconds());
+        if event.dwExtraInfo == OWN_OUTPUT_MARKER {
+            self.flow.on_own_echo(&mut SendInputSink);
+        }
         if should_ignore_event(
             injected,
             event.dwExtraInfo,
@@ -790,6 +1340,7 @@ impl HookState {
             return false;
         }
         self.catch_up();
+        self.sleep_when_stressed();
         if !injected {
             PHYSICAL_KEYS.fetch_add(1, Ordering::Relaxed);
         }
@@ -873,6 +1424,12 @@ fn character_for_key(event: &KBDLLHOOKSTRUCT) -> Option<char> {
     char::from_u32(u32::from(buffer[0]))
 }
 
+/// Page Up/Down, End, Home, the arrows, Insert and Delete: sent again without the extended
+/// flag they would act as their number pad twins.
+fn is_extended_key(virtual_key: u16) -> bool {
+    matches!(virtual_key, 0x21..=0x28 | 0x2D | 0x2E)
+}
+
 fn keyboard_event(stroke: Stroke, release: bool) -> INPUT {
     let release_flag = if release {
         KEYEVENTF_KEYUP
@@ -882,6 +1439,14 @@ fn keyboard_event(stroke: Stroke, release: bool) -> INPUT {
     let (virtual_key, scan_code, flags) = match stroke {
         Stroke::Backspace => (VIRTUAL_KEY(VK_BACK as u16), 0, release_flag),
         Stroke::Unit(unit) => (VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE | release_flag),
+        Stroke::Key(virtual_key) => {
+            let extended = if is_extended_key(virtual_key) {
+                KEYEVENTF_EXTENDEDKEY
+            } else {
+                Default::default()
+            };
+            (VIRTUAL_KEY(virtual_key), 0, release_flag | extended)
+        }
     };
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -905,20 +1470,23 @@ fn cancel_menu_activation() {
     let mut release = keyboard_event(Stroke::Backspace, true);
     press.Anonymous.ki.wVk = VIRTUAL_KEY(UNASSIGNED_KEY);
     release.Anonymous.ki.wVk = VIRTUAL_KEY(UNASSIGNED_KEY);
+    press.Anonymous.ki.dwExtraInfo = OWN_MENU_CANCEL_MARKER;
+    release.Anonymous.ki.dwExtraInfo = OWN_MENU_CANCEL_MARKER;
     unsafe { SendInput(&[press, release], size_of::<INPUT>() as i32) };
 }
 
 /// The whole edit in one `SendInput` call, so nothing the user types lands in the middle.
-fn send_edit(edit: &TextEdit) {
+/// Returns how many events Windows took; fewer than sent means the input was blocked.
+fn send_edit(edit: &TextEdit) -> usize {
     let mut events = Vec::with_capacity((edit.backspaces + edit.text.len() + 2) * 2);
     for stroke in strokes_for_sending(edit) {
         events.push(keyboard_event(stroke, false));
         events.push(keyboard_event(stroke, true));
     }
     if events.is_empty() {
-        return;
+        return 0;
     }
-    unsafe { SendInput(&events, size_of::<INPUT>() as i32) };
+    unsafe { SendInput(&events, size_of::<INPUT>() as i32) as usize }
 }
 
 const TIMING_CAPACITY: usize = 16384;
@@ -955,18 +1523,76 @@ pub fn callback_microseconds() -> Vec<u32> {
         .collect()
 }
 
+/// A callback this long is treated as already passed on by Windows. Derived from the user's
+/// `LowLevelHooksTimeout`: the default timeout of 300 ms gives 250 ms.
+static LATE_SWALLOW_IGNORED_MILLISECONDS: AtomicU64 = AtomicU64::new(250);
+const DEFAULT_HOOKS_TIMEOUT_MILLISECONDS: u64 = 300;
+
+/// Five sixths of the timeout leaves a margin for the clock and the scheduler.
+pub fn late_swallow_cutoff_for_timeout(timeout_milliseconds: u64) -> u64 {
+    timeout_milliseconds * 5 / 6
+}
+
+/// Callbacks that took longer than this are counted; they are what Windows may punish.
+const SLOW_CALLBACK_MICROSECONDS: u32 = 50_000;
+static SLOW_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+/// `GetTickCount` at the start of the last hook callback, to notice a hook that Windows removed.
+static LAST_CALLBACK_TICK: AtomicU32 = AtomicU32::new(0);
+
+/// How many key callbacks ran longer than 50 ms so far.
+#[allow(dead_code)]
+pub fn slow_callback_count() -> usize {
+    SLOW_CALLBACKS.load(Ordering::Relaxed)
+}
+
+/// Input is newer than the last callback by this much: the hook is gone, or the keyboard is.
+const SILENT_HOOK_MILLISECONDS: i32 = 1500;
+/// A reinstall is cheap but not free; never more often than this.
+const REINSTALL_PAUSE_MILLISECONDS: i32 = 10_000;
+
+/// Windows removes a low-level hook whose callback ran past its timeout, without telling the
+/// app. Input that produced no callback for a while means the hook is gone.
+pub fn hook_seems_removed(last_input_tick: u32, last_callback_tick: u32) -> bool {
+    last_input_tick.wrapping_sub(last_callback_tick) as i32 > SILENT_HOOK_MILLISECONDS
+}
+
+pub fn reinstall_allowed(now_tick: u32, last_reinstall_tick: Option<u32>) -> bool {
+    match last_reinstall_tick {
+        None => true,
+        Some(last) => now_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS,
+    }
+}
+
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     const HC_ACTION: i32 = 0;
     if code == HC_ACTION {
         let started = std::time::Instant::now();
+        LAST_CALLBACK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
         let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let swallowed = STATE.with(|cell| match cell.try_borrow_mut() {
+        let mut swallowed = STATE.with(|cell| match cell.try_borrow_mut() {
             Ok(mut guard) => guard
                 .as_mut()
                 .is_some_and(|state| state.handle_event(wparam.0 as u32, event)),
             Err(_) => false,
         });
-        record_callback_time(started.elapsed());
+        let elapsed = started.elapsed();
+        record_callback_time(elapsed);
+        let late_cutoff = LATE_SWALLOW_IGNORED_MILLISECONDS.load(Ordering::Relaxed);
+        if swallowed && elapsed.as_millis() >= u128::from(late_cutoff) {
+            // Windows has probably passed the key on already; its release must pass as well,
+            // or the application would see a key that stays down and repeats.
+            swallowed = false;
+            STATE.with(|cell| {
+                if let Ok(mut guard) = cell.try_borrow_mut()
+                    && let Some(state) = guard.as_mut()
+                {
+                    state.flow.release_swallow(event.vkCode);
+                }
+            });
+        }
+        if elapsed.as_micros() > u128::from(SLOW_CALLBACK_MICROSECONDS) {
+            SLOW_CALLBACKS.fetch_add(1, Ordering::Relaxed);
+        }
         if swallowed {
             return LRESULT(1);
         }
@@ -1012,6 +1638,12 @@ pub fn start(
     }
 }
 
+thread_local! {
+    /// The installed hook and the tick of the last reinstall; only the hook thread touches them.
+    static INSTALLED_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
+    static LAST_REINSTALL_TICK: Cell<Option<u32>> = const { Cell::new(None) };
+}
+
 fn run_hook_thread(
     provider: InputsProvider,
     toggle_action: ToggleAction,
@@ -1019,10 +1651,15 @@ fn run_hook_thread(
     ready: mpsc::Sender<Option<u32>>,
 ) {
     STATE.with(|cell| *cell.borrow_mut() = Some(HookState::new(provider, toggle_action, options)));
+    prefer_responsiveness();
     let Some(hook) = install_hook() else {
         let _ = ready.send(None);
         return;
     };
+    INSTALLED_HOOK.with(|cell| cell.set(Some(hook)));
+    LAST_CALLBACK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
+    // Event driven, so an idle app still has no timer: a window switch is the moment to check.
+    let foreground_watch = watch_foreground_changes();
     let mut message = MSG::default();
     // Creates this thread's message queue, so a quit posted right away is not lost.
     let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
@@ -1033,8 +1670,101 @@ fn run_hook_thread(
             DispatchMessageW(&message);
         }
     }
-    let _ = unsafe { UnhookWindowsHookEx(hook) };
+    if let Some(watch) = foreground_watch {
+        let _ = unsafe { UnhookWinEvent(watch) };
+    }
+    if let Some(current) = INSTALLED_HOOK.with(Cell::take) {
+        let _ = unsafe { UnhookWindowsHookEx(current) };
+    }
     STATE.with(|cell| *cell.borrow_mut() = None);
+}
+
+/// The hook thread must answer fast, and Windows must not park it on an efficiency core.
+fn prefer_responsiveness() {
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+        let state = PROCESS_POWER_THROTTLING_STATE {
+            Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+            ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            StateMask: 0,
+        };
+        let _ = SetProcessInformation(
+            GetCurrentProcess(),
+            ProcessPowerThrottling,
+            (&state as *const PROCESS_POWER_THROTTLING_STATE).cast(),
+            size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32,
+        );
+    }
+}
+
+fn watch_foreground_changes() -> Option<HWINEVENTHOOK> {
+    let watch = unsafe {
+        SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(foreground_changed),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        )
+    };
+    (!watch.is_invalid()).then_some(watch)
+}
+
+unsafe extern "system" fn foreground_changed(
+    _watch: HWINEVENTHOOK,
+    _event: u32,
+    _window: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    reinstall_hook_if_removed();
+}
+
+fn last_input_tick() -> Option<u32> {
+    let mut info = LASTINPUTINFO {
+        cbSize: size_of::<LASTINPUTINFO>() as u32,
+        dwTime: 0,
+    };
+    unsafe { GetLastInputInfo(&mut info) }
+        .as_bool()
+        .then_some(info.dwTime)
+}
+
+fn reinstall_hook_if_removed() {
+    let Some(input_tick) = last_input_tick() else {
+        return;
+    };
+    if !hook_seems_removed(input_tick, LAST_CALLBACK_TICK.load(Ordering::Relaxed)) {
+        return;
+    }
+    let now = unsafe { GetTickCount() };
+    if !reinstall_allowed(now, LAST_REINSTALL_TICK.with(Cell::get)) {
+        return;
+    }
+    if let Some(old) = INSTALLED_HOOK.with(Cell::take) {
+        let _ = unsafe { UnhookWindowsHookEx(old) };
+    }
+    LAST_CALLBACK_TICK.store(now, Ordering::Relaxed);
+    let installed = install_hook();
+    // Only a successful install starts the pause, so a failed one is tried again at the next
+    // window switch.
+    if installed.is_some() {
+        LAST_REINSTALL_TICK.with(|cell| cell.set(Some(now)));
+    }
+    INSTALLED_HOOK.with(|cell| cell.set(installed));
+    // A key-up that arrived while the hook was gone never reached the flow, and keys that
+    // waited for an echo that was lost with the hook are typed now.
+    STATE.with(|cell| {
+        if let Ok(mut guard) = cell.try_borrow_mut()
+            && let Some(state) = guard.as_mut()
+        {
+            state.flow.forget_held_keys(&mut SendInputSink);
+        }
+    });
 }
 
 fn install_hook() -> Option<HHOOK> {

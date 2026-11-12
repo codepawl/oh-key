@@ -12,6 +12,10 @@
 //! An optional first argument limits the run to cases whose name contains one of its
 //! comma-separated parts (the whole suite can outlast the 58 second watchdog).
 //!
+//! Stress knobs (environment variables, all optional): `OHKEY_TEST_HOOK_DELAY_MS` and
+//! `OHKEY_TEST_HOOK_DELAY_EVERY` make the hook callback slow, `OHKEY_TEST_CPU_STRESS_THREADS`
+//! loads the cores, `OHKEY_DISABLE_MITIGATIONS=1` switches the lag fixes off (negative control).
+//!
 //! The cases live in `src/hook_cases.rs` (key script syntax there); `cargo test` replays the same
 //! table headless. `{WAIT}` pauses 350 ms here so the autocomplete suggestion lands.
 
@@ -56,7 +60,7 @@ mod suite {
     };
     use windows::core::{HRESULT, PCWSTR, PWSTR, implement, w};
 
-    use crate::hook::{self, HookInputs, HookOptions};
+    use crate::hook::{self, HookInputs, HookOptions, Mitigations};
     use crate::hook_cases::{Case, Control, all_cases};
 
     /// A developer run must end fast so the keyboard is never hooked for long; a hosted runner is slower and
@@ -596,6 +600,7 @@ mod suite {
             percentile(&timings, 0.99),
             timings.last().copied().unwrap_or(0)
         );
+        println!("callbacks over 50 ms: {}", hook::slow_callback_count());
     }
 
     fn print_row(case: &Case, outcome: &Outcome) {
@@ -641,6 +646,69 @@ mod suite {
         exit_code
     }
 
+    fn number_from_environment(name: &str) -> u32 {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// The stress knobs of the CI job; with none set the hook runs as in the app.
+    /// `OHKEY_TEST_HOOK_DELAY_MS` makes the callback sleep that long on every
+    /// `OHKEY_TEST_HOOK_DELAY_EVERY`th key (3 when unset), `OHKEY_TEST_CPU_STRESS_THREADS`
+    /// starts that many busy threads, and `OHKEY_DISABLE_MITIGATIONS=1` is the negative control.
+    fn stress_options() -> HookOptions {
+        let delay = number_from_environment("OHKEY_TEST_HOOK_DELAY_MS");
+        let every = match number_from_environment("OHKEY_TEST_HOOK_DELAY_EVERY") {
+            0 => 3,
+            chosen => chosen,
+        };
+        let fixes_disabled =
+            std::env::var("OHKEY_DISABLE_MITIGATIONS").is_ok_and(|value| value == "1");
+        let mitigations = if fixes_disabled {
+            Mitigations::none()
+        } else {
+            Mitigations::default()
+        };
+        if delay > 0 {
+            println!("stress: callback sleeps {delay} ms on every {every}th key");
+        }
+        HookOptions {
+            accept_foreign_injected_keys: true,
+            mitigations,
+            stress_delay_milliseconds: delay,
+            stress_every_keys: every,
+        }
+    }
+
+    static STOP_CPU_STRESS: AtomicBool = AtomicBool::new(false);
+
+    /// Busy threads at normal priority, so the hook thread competes for the cores like it
+    /// does on a loaded machine.
+    fn start_cpu_stress() -> Vec<std::thread::JoinHandle<()>> {
+        let count = number_from_environment("OHKEY_TEST_CPU_STRESS_THREADS");
+        if count > 0 {
+            println!("stress: {count} busy threads");
+        }
+        (0..count)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let mut counter = 0u64;
+                    while !STOP_CPU_STRESS.load(Ordering::Relaxed) {
+                        counter = std::hint::black_box(counter.wrapping_add(1));
+                    }
+                })
+            })
+            .collect()
+    }
+
+    fn stop_cpu_stress(threads: Vec<std::thread::JoinHandle<()>>) {
+        STOP_CPU_STRESS.store(true, Ordering::Relaxed);
+        for thread in threads {
+            let _ = thread.join();
+        }
+    }
+
     fn run_with_windows() -> i32 {
         if caps_lock_is_on() {
             eprintln!("hook_suite: Caps Lock is on, turn it off first; nothing was typed");
@@ -674,14 +742,14 @@ mod suite {
             VIETNAMESE.fetch_xor(true, Ordering::Relaxed);
             TOGGLES.fetch_add(1, Ordering::Relaxed);
         });
-        let options = HookOptions {
-            accept_foreign_injected_keys: true,
-        };
+        let options = stress_options();
         let Some(hook_handle) = hook::start(provider, toggle, options) else {
             eprintln!("hook_suite: the hook could not start");
             return 4;
         };
+        let busy_threads = start_cpu_stress();
         let exit_code = run_all(&windows);
+        stop_cpu_stress(busy_threads);
         if caps_lock_is_on() {
             press_chord(&[VK_CAPITAL]);
         }

@@ -72,7 +72,7 @@ jobs:
           key: macos-app
       - name: Build the app
         run: bash macos/build.sh
-      - name: Check the bundle
+      - name: Check the bundle and run the editor tests
         run: bash macos/verify.sh
       - uses: actions/upload-artifact@v4
         with:
@@ -127,3 +127,76 @@ jobs:
             }
           }
           if ($failed) { exit 1 }
+      - name: Pin the hook timeout at its default
+        # Windows drops a hook whose callback runs past this value; a fixed value makes the
+        # stress runs below repeatable.
+        shell: pwsh
+        run: reg add "HKCU\Control Panel\Desktop" /v LowLevelHooksTimeout /t REG_DWORD /d 300 /f
+      - name: Stress the hook (slow callbacks and busy cores)
+        # The callback sleeps 60 ms on every third key event and every core is busy, so keys queue
+        # up behind our own edits like on a loaded machine. Exit code 2 and 3 are skips, as above.
+        continue-on-error: true
+        shell: pwsh
+        timeout-minutes: 8
+        env:
+          OHKEY_TEST_HOOK_DELAY_MS: '60'
+          OHKEY_TEST_HOOK_DELAY_EVERY: '3'
+        run: |
+          # NUMBER_OF_PROCESSORS is a runner OS variable: the workflow env context cannot see it.
+          $env:OHKEY_TEST_CPU_STRESS_THREADS = $env:NUMBER_OF_PROCESSORS
+          Write-Host "busy threads: $($env:OHKEY_TEST_CPU_STRESS_THREADS)"
+          $failed = $false
+          foreach ($filter in @('fast-5ms,basic', 'hard-rhymes,backspace,english')) {
+            & "target/x86_64-pc-windows-msvc/debug/examples/hook_suite.exe" $filter
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+              Write-Host "stress [$filter] passed"
+            } elseif ($code -eq 2 -or $code -eq 3) {
+              Write-Host "::warning title=stress [$filter] skipped::exit $code"
+            } else {
+              Write-Host "::error title=stress [$filter] failed::exit code $code"
+              $failed = $true
+            }
+          }
+          if ($failed) { exit 1 }
+      - name: Stress the hook with callbacks past the timeout
+        # Every 20th key holds the callback for 350 ms, above the 300 ms timeout, so Windows
+        # passes the key on and may remove the hook: the late-swallow and watchdog paths run.
+        continue-on-error: true
+        shell: pwsh
+        timeout-minutes: 8
+        env:
+          OHKEY_TEST_HOOK_DELAY_MS: '350'
+          OHKEY_TEST_HOOK_DELAY_EVERY: '20'
+        run: |
+          & "target/x86_64-pc-windows-msvc/debug/examples/hook_suite.exe" 'fast-5ms,basic'
+          $code = $LASTEXITCODE
+          if ($code -eq 0) {
+            Write-Host "late callbacks passed"
+          } elseif ($code -eq 2 -or $code -eq 3) {
+            Write-Host "::warning title=late callbacks skipped::exit $code"
+          } else {
+            Write-Host "::error title=late callbacks failed::exit code $code"
+            exit 1
+          }
+      - name: Stress the hook with the fixes off (negative control)
+        # Shows the symptom: with the fixes off the same load garbles text, so the suite should end
+        # with exit code 1. Never fails the job; it prints what the load does to the old logic.
+        continue-on-error: true
+        shell: pwsh
+        timeout-minutes: 4
+        env:
+          OHKEY_DISABLE_MITIGATIONS: '1'
+          OHKEY_TEST_HOOK_DELAY_MS: '60'
+          OHKEY_TEST_HOOK_DELAY_EVERY: '3'
+        run: |
+          $env:OHKEY_TEST_CPU_STRESS_THREADS = $env:NUMBER_OF_PROCESSORS
+          Write-Host "busy threads: $($env:OHKEY_TEST_CPU_STRESS_THREADS)"
+          & "target/x86_64-pc-windows-msvc/debug/examples/hook_suite.exe" 'fast-5ms,basic'
+          $code = $LASTEXITCODE
+          if ($code -eq 1) {
+            Write-Host "::notice title=negative control::the load breaks the old logic, as expected (exit 1)"
+          } else {
+            Write-Host "::warning title=negative control::exit $code, the load did not break the old logic here"
+          }
+          exit 0
