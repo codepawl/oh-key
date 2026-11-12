@@ -135,7 +135,7 @@ pub fn register_class(
     registered: &Once,
 ) {
     registered.call_once(|| {
-        let icon = mode_icon::create_icon(graphics, true).unwrap_or_default();
+        let icon = mode_icon::icon_with(graphics, true);
         let class = WNDCLASSEXW {
             cbSize: size_of::<WNDCLASSEXW>() as u32,
             lpfnWndProc: window_proc,

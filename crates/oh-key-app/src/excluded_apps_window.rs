@@ -302,7 +302,7 @@ fn place_window(hwnd: HWND, style: windows::Win32::UI::WindowsAndMessaging::WIND
 }
 
 fn register_class(graphics: &Graphics) {
-    let icon = mode_icon::create_icon(graphics, true).unwrap_or_default();
+    let icon = mode_icon::icon_with(graphics, true);
     let class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
         lpfnWndProc: Some(window_proc),

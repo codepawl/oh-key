@@ -50,7 +50,7 @@ pub struct Hit {
 static OPEN_WINDOW: AtomicIsize = AtomicIsize::new(0);
 
 struct SettingsWindow {
-    graphics: *const Graphics,
+    graphics: Graphics,
     hwnd: HWND,
     target: ID2D1RenderTarget,
     settings: Settings,
@@ -76,14 +76,15 @@ fn window_height(settings: &Settings) -> f32 {
 }
 
 /// Opens the window, or brings the open one forward.
-pub fn open(graphics: &Graphics) -> Result<()> {
+pub fn open() -> Result<()> {
     if let Some(existing) = open_window_handle() {
         unsafe {
             let _ = SetForegroundWindow(existing);
         }
         return Ok(());
     }
-    register_class(graphics);
+    let graphics = Graphics::new()?;
+    register_class(&graphics);
     let settings = oh_key_ipc::load_settings();
     let instance = unsafe { GetModuleHandleW(None)? };
     let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
@@ -151,7 +152,7 @@ pub fn open(graphics: &Graphics) -> Result<()> {
         );
     }
     dark_frame(hwnd);
-    let target = create_target(graphics, hwnd, scale * 96.0)?;
+    let target = create_target(&graphics, hwnd, scale * 96.0)?;
     let window = Box::new(SettingsWindow {
         graphics,
         hwnd,
@@ -184,7 +185,7 @@ pub fn refresh() {
 }
 
 fn register_class(graphics: &Graphics) {
-    let icon = mode_icon::create_icon(graphics, true).unwrap_or_default();
+    let icon = mode_icon::icon_with(graphics, true);
     let class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
         lpfnWndProc: Some(window_proc),
@@ -308,7 +309,7 @@ unsafe extern "system" fn window_proc(
 
 impl SettingsWindow {
     fn graphics(&self) -> &Graphics {
-        unsafe { &*self.graphics }
+        &self.graphics
     }
 
     fn to_dips(&self, lparam: LPARAM) -> (f32, f32) {

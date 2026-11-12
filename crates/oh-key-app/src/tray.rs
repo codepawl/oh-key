@@ -1,25 +1,26 @@
 //! The tray icon: shows the mode (V or E), toggles it on a left click and opens the menu on a
-//! right click. A timer follows toggles made with the hotkey inside other apps.
+//! right click. It sleeps until a message or a mode change signalled by the hotkey arrives.
 
 use oh_key_engine::InputMethod;
-use oh_key_ipc::{SharedState, load_settings};
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+use oh_key_ipc::{SharedState, instance_suffix, load_settings};
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
     Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
-    DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetMessageW, GetWindowLongPtrW, HICON, HMENU,
-    KillTimer, MF_CHECKED, MF_POPUP, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage,
-    RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow, SetTimer, SetWindowLongPtrW,
-    TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, WM_APP,
-    WM_DESTROY, WM_LBUTTONUP, WM_RBUTTONUP, WM_TIMER, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    DispatchMessageW, GWLP_USERDATA, GetCursorPos, GetWindowLongPtrW, HMENU, MF_CHECKED, MF_POPUP,
+    MF_SEPARATOR, MF_STRING, MSG, MsgWaitForMultipleObjects, PM_REMOVE, PeekMessageW,
+    PostQuitMessage, QS_ALLINPUT, RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow,
+    SetWindowLongPtrW, TPM_BOTTOMALIGN, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    TranslateMessage, WM_APP, WM_DESTROY, WM_LBUTTONUP, WM_QUIT, WM_RBUTTONUP, WNDCLASSEXW,
+    WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{HSTRING, Result, w};
 
-use crate::graphics::Graphics;
 use crate::settings_model::INPUT_METHOD_CHOICES;
 use crate::{converter_window, macros_window, mode_icon, persistence, settings_window};
 
@@ -27,8 +28,8 @@ pub const TRAY_CLASS: windows::core::PCWSTR = w!("oh-key.tray");
 const MESSAGE_TRAY: u32 = WM_APP + 1;
 /// Sent by a second launch of the app, so it opens the control panel of the running one.
 pub const MESSAGE_OPEN_SETTINGS: u32 = WM_APP + 2;
-const MODE_TIMER: usize = 1;
-const MODE_POLL_MILLISECONDS: u32 = 250;
+/// Only when the mode event could not be created: check for a mode change this often.
+const MODE_FALLBACK_POLL_MILLISECONDS: u32 = 1000;
 
 const MENU_VIETNAMESE: usize = 1;
 const MENU_ENGLISH: usize = 2;
@@ -48,12 +49,14 @@ pub const LABEL_QUIT: &str = "Thoát";
 
 /// Everything the window procedure needs, owned by the window through its user data.
 struct Tray {
-    graphics: Graphics,
     shared: SharedState,
-    english_icon: HICON,
-    vietnamese_icon: HICON,
     shown_mode_counter: u64,
     taskbar_created: u32,
+}
+
+/// The hidden window's title; a second launch finds the running one by it.
+pub fn window_title() -> HSTRING {
+    HSTRING::from(format!("oh-key{}", instance_suffix()))
 }
 
 fn method_menu_id(index: usize) -> usize {
@@ -74,7 +77,7 @@ fn tooltip(vietnamese: bool) -> &'static str {
 }
 
 /// Creates the hidden window and the tray icon, then runs the message loop until quit.
-pub fn run(graphics: Graphics, shared: SharedState) -> Result<()> {
+pub fn run(shared: SharedState) -> Result<()> {
     let instance = unsafe { GetModuleHandleW(None)? };
     let class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -84,13 +87,8 @@ pub fn run(graphics: Graphics, shared: SharedState) -> Result<()> {
         ..Default::default()
     };
     unsafe { RegisterClassExW(&class) };
-    let english_icon = mode_icon::create_icon(&graphics, false)?;
-    let vietnamese_icon = mode_icon::create_icon(&graphics, true)?;
     let tray = Box::new(Tray {
-        graphics,
         shared,
-        english_icon,
-        vietnamese_icon,
         shown_mode_counter: 0,
         taskbar_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
     });
@@ -100,7 +98,7 @@ pub fn run(graphics: Graphics, shared: SharedState) -> Result<()> {
         CreateWindowExW(
             WS_EX_TOOLWINDOW,
             TRAY_CLASS,
-            w!("oh-key"),
+            &window_title(),
             WS_OVERLAPPED,
             0,
             0,
@@ -116,17 +114,34 @@ pub fn run(graphics: Graphics, shared: SharedState) -> Result<()> {
     let tray = unsafe { &mut *tray_pointer };
     tray.shown_mode_counter = tray.shared.mode_counter();
     tray.add_icon(hwnd);
-    unsafe { SetTimer(Some(hwnd), MODE_TIMER, MODE_POLL_MILLISECONDS, None) };
-
-    let mut message = MSG::default();
-    while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
-        unsafe {
-            let _ = TranslateMessage(&message);
-            DispatchMessageW(&message);
-        }
-    }
+    run_message_loop(tray, hwnd);
     drop(unsafe { Box::from_raw(tray_pointer) });
     Ok(())
+}
+
+/// Sleeps until a window message or the mode event arrives; no timer wakes it while idle.
+fn run_message_loop(tray: &mut Tray, hwnd: HWND) {
+    let mode_event = tray.shared.mode_event();
+    let wake_sources: Vec<HANDLE> = mode_event.into_iter().collect();
+    let timeout = if mode_event.is_some() {
+        INFINITE
+    } else {
+        MODE_FALLBACK_POLL_MILLISECONDS
+    };
+    let mut message = MSG::default();
+    loop {
+        tray.follow_mode(hwnd);
+        while unsafe { PeekMessageW(&mut message, None, 0, 0, PM_REMOVE) }.as_bool() {
+            if message.message == WM_QUIT {
+                return;
+            }
+            unsafe {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        unsafe { MsgWaitForMultipleObjects(Some(&wake_sources), false, timeout, QS_ALLINPUT) };
+    }
 }
 
 unsafe extern "system" fn window_proc(
@@ -150,17 +165,10 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         MESSAGE_OPEN_SETTINGS => {
-            let _ = settings_window::open(&tray.graphics);
-            LRESULT(0)
-        }
-        WM_TIMER if wparam.0 == MODE_TIMER => {
-            tray.follow_mode(hwnd);
+            let _ = settings_window::open();
             LRESULT(0)
         }
         WM_DESTROY => {
-            unsafe {
-                let _ = KillTimer(Some(hwnd), MODE_TIMER);
-            }
             tray.remove_icon(hwnd);
             unsafe { PostQuitMessage(0) };
             LRESULT(0)
@@ -174,14 +182,6 @@ unsafe extern "system" fn window_proc(
 }
 
 impl Tray {
-    fn icon_for(&self, vietnamese: bool) -> HICON {
-        if vietnamese {
-            self.vietnamese_icon
-        } else {
-            self.english_icon
-        }
-    }
-
     fn notify_data(&self, hwnd: HWND) -> NOTIFYICONDATAW {
         let vietnamese = self.shared.vietnamese();
         let mut data = NOTIFYICONDATAW {
@@ -190,7 +190,7 @@ impl Tray {
             uID: 1,
             uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
             uCallbackMessage: MESSAGE_TRAY,
-            hIcon: self.icon_for(vietnamese),
+            hIcon: mode_icon::icon(vietnamese),
             ..Default::default()
         };
         let tip: Vec<u16> = tooltip(vietnamese).encode_utf16().collect();
@@ -277,7 +277,7 @@ impl Tray {
             MENU_VIETNAMESE => self.select_vietnamese(hwnd, true),
             MENU_ENGLISH => self.select_vietnamese(hwnd, false),
             MENU_SETTINGS => {
-                let _ = settings_window::open(&self.graphics);
+                let _ = settings_window::open();
             }
             MENU_MACROS => macros_window::open(None),
             MENU_CONVERTER => converter_window::open(None),

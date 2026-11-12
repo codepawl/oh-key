@@ -36,6 +36,10 @@ CI runs the pure crates on Windows, Linux and macOS, so keep them free of platfo
 - Always use absolute paths; do not `cd` into subfolders.
 - Do not commit secrets or personal data.
 
+## Measuring beside an installed copy
+
+`OHKEY_NO_HOOK=1` skips the keyboard hook and `OHKEY_INSTANCE=<name>` renames the mutex, tray window title, shared state and mode event, so a build can run next to the installed app without talking to it. Both are for measurement only and do nothing when unset. The tray holds no Direct2D, DirectWrite or WIC objects while idle (windows create their own and the last one to close trims the working set), and it sleeps on the mode event instead of a timer.
+
 ## Licence
 
 GPL-3.0-or-later. Code ported from Unikey keeps its GPL terms. Do not copy in code under an incompatible licence.

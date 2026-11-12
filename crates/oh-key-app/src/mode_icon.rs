@@ -1,6 +1,9 @@
 //! The tray icon: an ink tile with a bold bright letter, "V" in the accent for Vietnamese and
 //! "E" in the text colour for English. Drawn at run time so it follows the DPI of the display.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
 use windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT;
 use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows::Win32::UI::WindowsAndMessaging::{CreateIcon, GetSystemMetrics, HICON, SM_CXSMICON};
@@ -54,9 +57,45 @@ pub fn draw(
     }
 }
 
-/// The icon at the size Windows uses for small icons on this display. COM must be initialised.
-pub fn create_icon(graphics: &Graphics, vietnamese: bool) -> Result<HICON> {
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as u32;
+thread_local! {
+    /// Drawn icons by (pixel size, mode). The size is the small-icon size of the display, so
+    /// each DPI draws once, and the factories behind the drawing are gone again afterwards.
+    static ICON_CACHE: RefCell<HashMap<(u32, bool), HICON>> = RefCell::new(HashMap::new());
+}
+
+fn small_icon_size() -> u32 {
+    unsafe { GetSystemMetrics(SM_CXSMICON) }.max(16) as u32
+}
+
+fn cached(key: (u32, bool)) -> Option<HICON> {
+    ICON_CACHE.with(|cache| cache.borrow().get(&key).copied())
+}
+
+/// The icon at the small-icon size of this display, drawn with `graphics` the first time.
+pub fn icon_with(graphics: &Graphics, vietnamese: bool) -> HICON {
+    let key = (small_icon_size(), vietnamese);
+    if let Some(icon) = cached(key) {
+        return icon;
+    }
+    let icon = create_icon(graphics, key.0, vietnamese).unwrap_or_default();
+    ICON_CACHE.with(|cache| cache.borrow_mut().insert(key, icon));
+    icon
+}
+
+/// Like `icon_with`, for callers with no graphics open: the factories live only while the
+/// icon is drawn.
+pub fn icon(vietnamese: bool) -> HICON {
+    if let Some(icon) = cached((small_icon_size(), vietnamese)) {
+        return icon;
+    }
+    match Graphics::new() {
+        Ok(graphics) => icon_with(&graphics, vietnamese),
+        Err(_) => HICON::default(),
+    }
+}
+
+/// COM must be initialised.
+fn create_icon(graphics: &Graphics, size: u32, vietnamese: bool) -> Result<HICON> {
     let offscreen = Offscreen::new(graphics, size, size)?;
     unsafe {
         offscreen.target.BeginDraw();

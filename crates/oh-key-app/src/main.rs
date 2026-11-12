@@ -44,7 +44,7 @@ mod tray;
 mod app {
     use std::path::PathBuf;
 
-    use oh_key_ipc::{SharedState, load_settings};
+    use oh_key_ipc::{SharedState, instance_suffix, load_settings};
     use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
     use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
     use windows::Win32::System::Threading::CreateMutexW;
@@ -52,7 +52,7 @@ mod app {
         DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext,
     };
     use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW};
-    use windows::core::{Result, w};
+    use windows::core::{HSTRING, Result};
 
     use crate::graphics::Graphics;
     use crate::{hook, persistence, render_png, tray};
@@ -76,13 +76,21 @@ mod app {
         let shared = SharedState::open()?;
         persistence::publish(&settings);
         shared.set_vietnamese(settings.start_vietnamese);
+        let _keyboard_hook = start_keyboard_hook()?;
+        tray::run(shared)
+    }
+
+    /// `OHKEY_NO_HOOK=1` leaves the hook out, so a measurement build never touches typing.
+    fn start_keyboard_hook() -> Result<Option<hook::HookHandle>> {
+        if std::env::var_os("OHKEY_NO_HOOK").is_some_and(|value| value == "1") {
+            return Ok(None);
+        }
         let toggle_state = SharedState::open()?;
-        let _keyboard_hook = hook::start(
+        Ok(hook::start(
             hook::app_inputs_provider(SharedState::open()?),
             Box::new(move || toggle_state.set_vietnamese(!toggle_state.vietnamese())),
             hook::HookOptions::default(),
-        );
-        tray::run(Graphics::new()?, shared)
+        ))
     }
 
     fn render_png_command(arguments: &[String]) -> Result<()> {
@@ -95,11 +103,13 @@ mod app {
     /// The mutex handle while this is the only instance. A second launch asks the running
     /// one to open the control panel and gets `None`.
     fn claim_single_instance() -> Result<Option<HANDLE>> {
-        let mutex = unsafe { CreateMutexW(None, true, w!("Local\\oh-key.app"))? };
+        let mutex_name = HSTRING::from(format!("Local\\oh-key.app{}", instance_suffix()));
+        let mutex = unsafe { CreateMutexW(None, true, &mutex_name)? };
         if unsafe { GetLastError() } != ERROR_ALREADY_EXISTS {
             return Ok(Some(mutex));
         }
-        if let Ok(running) = unsafe { FindWindowW(tray::TRAY_CLASS, None) } {
+        let title = tray::window_title();
+        if let Ok(running) = unsafe { FindWindowW(tray::TRAY_CLASS, &title) } {
             let _ = unsafe {
                 PostMessageW(
                     Some(running),

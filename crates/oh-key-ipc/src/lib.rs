@@ -14,4 +14,4 @@ pub use settings::{
     parse_settings, save_settings,
 };
 #[cfg(windows)]
-pub use shared_state::SharedState;
+pub use shared_state::{SharedState, instance_suffix};

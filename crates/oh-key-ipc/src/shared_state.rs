@@ -11,6 +11,7 @@ use windows::Win32::System::Memory::{
     CreateFileMappingW, FILE_MAP_READ, FILE_MAP_WRITE, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
     OpenFileMappingW, PAGE_READWRITE, UnmapViewOfFile,
 };
+use windows::Win32::System::Threading::{CreateEventW, SetEvent};
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
 const MAPPING_NAME: &str = "Local\\oh-key-state";
@@ -21,19 +22,30 @@ const MAPPING_NAME: &str = "Local\\oh-key-state";
 const SECURITY_DESCRIPTOR: PCWSTR =
     w!("D:(A;;GRGW;;;SY)(A;;GRGW;;;IU)(A;;GRGW;;;AC)S:(ML;;NW;;;LW)");
 
+/// Measurement builds set `OHKEY_INSTANCE=<name>` to run beside the installed app without
+/// sharing its mutex, window or state. Empty (and so no effect) when unset.
+pub fn instance_suffix() -> String {
+    match std::env::var("OHKEY_INSTANCE") {
+        Ok(name) if !name.is_empty() => format!("-{name}"),
+        _ => String::new(),
+    }
+}
+
 pub struct SharedState {
     mapping: HANDLE,
     view: MEMORY_MAPPED_VIEW_ADDRESS,
+    /// Auto-reset event set on every mode change, so the tray sleeps instead of polling.
+    mode_event: Option<HANDLE>,
 }
 
-// The block is only touched through atomics.
+// The block is only touched through atomics and the event handle is thread safe.
 unsafe impl Send for SharedState {}
 unsafe impl Sync for SharedState {}
 
 impl SharedState {
     /// Creates the mapping, or opens it when another process made it first.
     pub fn open() -> Result<Self> {
-        Self::open_named(MAPPING_NAME)
+        Self::open_named(&format!("{MAPPING_NAME}{}", instance_suffix()))
     }
 
     pub(crate) fn open_named(name: &str) -> Result<Self> {
@@ -52,7 +64,20 @@ impl SharedState {
             let _ = unsafe { CloseHandle(mapping) };
             return Err(error);
         }
-        Ok(SharedState { mapping, view })
+        let mode_event = unsafe {
+            CreateEventW(None, false, false, &HSTRING::from(format!("{name}-mode"))).ok()
+        };
+        Ok(SharedState {
+            mapping,
+            view,
+            mode_event,
+        })
+    }
+
+    /// Signalled after every mode change by any `SharedState` on the same name. One thread
+    /// should wait on it: it resets itself when a wait returns.
+    pub fn mode_event(&self) -> Option<HANDLE> {
+        self.mode_event
     }
 
     fn block(&self) -> &StateBlock {
@@ -71,6 +96,9 @@ impl SharedState {
 
     pub fn set_vietnamese(&self, on: bool) {
         self.block().set_vietnamese(on);
+        if let Some(event) = self.mode_event {
+            let _ = unsafe { SetEvent(event) };
+        }
     }
 
     pub fn mode_counter(&self) -> u64 {
@@ -89,6 +117,9 @@ impl SharedState {
 
 impl Drop for SharedState {
     fn drop(&mut self) {
+        if let Some(event) = self.mode_event {
+            let _ = unsafe { CloseHandle(event) };
+        }
         let _ = unsafe { UnmapViewOfFile(self.view) };
         let _ = unsafe { CloseHandle(self.mapping) };
     }
@@ -142,6 +173,21 @@ fn create_mapping(name: &str) -> Result<HANDLE> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+    use windows::Win32::System::Threading::WaitForSingleObject;
+
+    #[test]
+    fn a_mode_change_signals_the_mode_event_of_every_handle() {
+        let name = format!("Local\\oh-key-state-event-test-{}", std::process::id());
+        let waiter = SharedState::open_named(&name).expect("create mapping");
+        let writer = SharedState::open_named(&name).expect("open mapping");
+        let event = waiter.mode_event().expect("mode event");
+        assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_TIMEOUT);
+
+        writer.set_vietnamese(false);
+        assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_OBJECT_0);
+        assert_eq!(unsafe { WaitForSingleObject(event, 0) }, WAIT_TIMEOUT);
+    }
 
     #[test]
     fn two_handles_in_one_process_see_each_others_writes() {
