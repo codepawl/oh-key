@@ -16,6 +16,7 @@ pub const VK_LCONTROL: u32 = 0xA2;
 pub const VK_RCONTROL: u32 = 0xA3;
 pub const VK_LMENU: u32 = 0xA4;
 pub const VK_RMENU: u32 = 0xA5;
+pub const VK_PACKET: u32 = 0xE7;
 /// Page Up, Page Down, End, Home, the arrows, Select, Print, Execute, Snapshot, Insert, Delete.
 const FIRST_NAVIGATION_KEY: u32 = 0x21;
 const LAST_NAVIGATION_KEY: u32 = 0x2E;
@@ -49,6 +50,12 @@ pub enum KeyDecision {
 }
 
 pub fn decide_key(event: &KeyEvent, composing: bool) -> KeyDecision {
+    // Text arriving as VK_PACKET is already final: in applications without a
+    // TSF text store it is how our own committed word reaches the window.
+    // Eating it swallowed every word we typed.
+    if event.virtual_key == VK_PACKET {
+        return KeyDecision::PassThrough;
+    }
     if is_modifier_key(event.virtual_key) {
         return KeyDecision::PassThrough;
     }
@@ -168,6 +175,17 @@ mod tests {
     fn letters_go_to_the_engine() {
         assert_eq!(decide_key(&letter('a'), false), KeyDecision::Process('a'));
         assert_eq!(decide_key(&letter('A'), true), KeyDecision::Process('A'));
+    }
+
+    #[test]
+    fn unicode_packets_pass_through_untouched() {
+        let packet = KeyEvent {
+            virtual_key: VK_PACKET,
+            character: Some('ệ'),
+            ..KeyEvent::default()
+        };
+        assert_eq!(decide_key(&packet, false), KeyDecision::PassThrough);
+        assert_eq!(decide_key(&packet, true), KeyDecision::PassThrough);
     }
 
     #[test]

@@ -47,6 +47,14 @@ struct EditSession {
 
 impl ITfEditSession_Impl for EditSession_Impl {
     fn DoEditSession(&self, edit_cookie: u32) -> Result<()> {
+        let outcome = self.apply_edit(edit_cookie);
+        crate::diagnostics::trace!("do edit session: {outcome:?}");
+        outcome
+    }
+}
+
+impl EditSession_Impl {
+    fn apply_edit(&self, edit_cookie: u32) -> Result<()> {
         let range = self.composition_range(edit_cookie)?;
         match &self.edit {
             CompositionEdit::Update(text) => {

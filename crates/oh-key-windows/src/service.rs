@@ -102,6 +102,10 @@ impl ITfTextInputProcessor_Impl for TextService_Impl {
         self.client_id.set(client_id);
         self.load_configuration();
         let outcome = self.attach(&thread_manager, client_id);
+        crate::diagnostics::trace!(
+            "activate client {client_id}: {outcome:?} vietnamese={}",
+            self.vietnamese.get()
+        );
         if outcome.is_err() {
             self.detach();
         }
@@ -316,6 +320,7 @@ impl TextService_Impl {
             self.attribute_atom.get(),
             edit,
         );
+        crate::diagnostics::trace!("edit session: {outcome:?}");
         if outcome.is_err() {
             // The host refused the edit; do not keep state it never saw.
             self.abandon_composition();
@@ -437,6 +442,15 @@ impl TextService_Impl {
     }
 }
 
+fn decision_name(decision: &KeyDecision) -> &'static str {
+    match decision {
+        KeyDecision::PassThrough => "pass",
+        KeyDecision::CommitThenPassThrough => "commit-pass",
+        KeyDecision::Process(_) => "process",
+        KeyDecision::Backspace => "backspace",
+    }
+}
+
 fn key_is_down(virtual_key: u32) -> bool {
     (unsafe { GetKeyState(virtual_key as i32) } as u16 & KEY_DOWN_MASK) != 0
 }
@@ -483,6 +497,11 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
         }
         let composing = self.is_composing();
         let decision = decide_key(&event, composing);
+        crate::diagnostics::trace!(
+            "test key down vk={:#x} composing={composing} decision={}",
+            event.virtual_key,
+            decision_name(&decision)
+        );
         Ok(BOOL::from(will_consume(decision, composing)))
     }
 
@@ -504,6 +523,7 @@ impl ITfKeyEventSink_Impl for TextService_Impl {
             Ok(context) => self.handle_key_down(context, wparam, lparam),
             Err(_) => false,
         };
+        crate::diagnostics::trace!("key down vk={:#x} consumed={consumed}", wparam.0);
         self.key_busy.set(false);
         Ok(BOOL::from(consumed))
     }

@@ -9,6 +9,7 @@
 // rustc already exports the #[no_mangle] entry points; the linker only notes it.
 #![allow(linker_messages)]
 
+mod diagnostics;
 mod display_attribute;
 mod edit;
 // The test executable must not export COM entry points of its own.
