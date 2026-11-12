@@ -42,7 +42,11 @@ pub(crate) fn action_for(method: InputMethod, key: char) -> Action {
 }
 
 fn telex_action(key: char, full: bool) -> Action {
-    let lower = key.to_lowercase().next().unwrap_or(key);
+    let lower = if key.is_ascii() {
+        key.to_ascii_lowercase()
+    } else {
+        key.to_lowercase().next().unwrap_or(key)
+    };
     match lower {
         's' => Action::Tone(1),
         'f' => Action::Tone(2),

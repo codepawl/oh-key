@@ -6,7 +6,7 @@ Vietnamese typing app for Windows in Rust, in the Unikey style (a tray app with 
 
 - `Cargo.toml`: workspace, `members = ["crates/*"]`, edition 2024. Version, licence and repository live in `[workspace.package]`.
 - `crates/oh-key-charset`: charset conversion (Unicode, TCVN3, VNI, VIQR and others). Pure, no system calls.
-- `crates/oh-key-engine`: the typing engine (Telex, VNI), spell check and restore. Pure; `examples/bench.rs` is the benchmark.
+- `crates/oh-key-engine`: the typing engine (Telex, VNI), spell check and restore. Pure; `examples/bench.rs` is the benchmark. `bench/unikey-compare` replays one Telex corpus through UniKey's ukengine and through this engine for speed and output (`run.ps1 -UniKeySource <folder>`, see its README); the UniKey sources are never committed.
 - `crates/oh-key-macro`: macro (abbreviation) expansion. Pure.
 - `crates/oh-key-cli`: the `oh-key-cli` binary (`oh-key-cli type <keys>`).
 - `crates/oh-key-ipc`: what the parts of the app share: `config.toml` format (`Settings`, including `excluded_apps`; an old `hook_apps` line is ignored) and `SharedState`, a named memory block (`Local\oh-key-state`) with a seqlock-guarded settings copy, a generation counter and the global VI/EN mode, used by the tray, the hook and the second-instance launch.

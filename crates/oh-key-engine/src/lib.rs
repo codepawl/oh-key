@@ -73,6 +73,8 @@ pub enum KeyResult {
 /// A word never grows past this; a longer run is committed as it is.
 const MAX_WORD_LETTERS: usize = 48;
 const LONGEST_ENGLISH_WORD: usize = 24;
+/// Bytes kept free after a committed word for the key that ended it.
+const BOUNDARY_ROOM: usize = 4;
 
 pub struct Engine {
     config: Config,
@@ -241,11 +243,13 @@ impl Engine {
     }
 
     fn finish_word(&mut self) -> String {
-        let mut text = if self.should_restore_unfinished_word() {
-            self.raw_keys.iter().collect()
+        // Room for the boundary key the caller appends, so the text is allocated once.
+        let mut text = String::with_capacity(self.preedit.len() + BOUNDARY_ROOM);
+        if self.should_restore_unfinished_word() {
+            text.extend(self.raw_keys.iter());
         } else {
-            self.preedit.clone()
-        };
+            text.push_str(&self.preedit);
+        }
         if self.config.macro_enabled
             && let Some(expanded) = self.expand_macro(&text)
         {

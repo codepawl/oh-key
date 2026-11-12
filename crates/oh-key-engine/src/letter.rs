@@ -40,6 +40,24 @@ const VOWEL_TONED_CHARS: [[char; 6]; 12] = [
 /// a, A = â, B = ă, e, E = ê, i, o, O = ô, P = ơ, u, U = ư, y.
 const VOWEL_SEQUENCE_CODES: [u8; 12] = *b"aABeEioOPuUy";
 
+const NOT_A_VOWEL: u8 = u8::MAX;
+
+/// Vowel index for each ASCII base letter and mark (None, Roof, Hook, Stroke),
+/// so asking whether a letter is a vowel is one array read.
+const VOWEL_INDEX_BY_BASE: [[u8; 4]; 128] = vowel_index_table();
+
+const fn vowel_index_table() -> [[u8; 4]; 128] {
+    let mut table = [[NOT_A_VOWEL; 4]; 128];
+    table[b'a' as usize] = [0, 1, 2, NOT_A_VOWEL];
+    table[b'e' as usize] = [3, 4, NOT_A_VOWEL, NOT_A_VOWEL];
+    table[b'i' as usize][0] = 5;
+    table[b'o' as usize] = [6, 7, 8, NOT_A_VOWEL];
+    table[b'u' as usize][0] = 9;
+    table[b'u' as usize][2] = 10;
+    table[b'y' as usize][0] = 11;
+    table
+}
+
 impl Letter {
     pub fn new(base: char, mark: Mark, upper: bool) -> Letter {
         Letter { base, mark, upper }
@@ -47,6 +65,13 @@ impl Letter {
 
     /// A letter exactly as typed, without any mark.
     pub fn plain(key: char) -> Letter {
+        if key.is_ascii() {
+            return Letter::new(
+                key.to_ascii_lowercase(),
+                Mark::None,
+                key.is_ascii_uppercase(),
+            );
+        }
         let mut lowercase = key.to_lowercase();
         let base = lowercase.next().unwrap_or(key);
         let case_survives_round_trip =
@@ -60,22 +85,14 @@ impl Letter {
     }
 
     pub fn vowel_index(self) -> Option<usize> {
-        let index = match (self.base, self.mark) {
-            ('a', Mark::None) => 0,
-            ('a', Mark::Roof) => 1,
-            ('a', Mark::Hook) => 2,
-            ('e', Mark::None) => 3,
-            ('e', Mark::Roof) => 4,
-            ('i', Mark::None) => 5,
-            ('o', Mark::None) => 6,
-            ('o', Mark::Roof) => 7,
-            ('o', Mark::Hook) => 8,
-            ('u', Mark::None) => 9,
-            ('u', Mark::Hook) => 10,
-            ('y', Mark::None) => 11,
-            _ => return None,
-        };
-        Some(index)
+        let base = self.base as usize;
+        if base >= VOWEL_INDEX_BY_BASE.len() {
+            return None;
+        }
+        match VOWEL_INDEX_BY_BASE[base][self.mark as usize] {
+            NOT_A_VOWEL => None,
+            index => Some(usize::from(index)),
+        }
     }
 
     pub fn is_vowel(self) -> bool {
