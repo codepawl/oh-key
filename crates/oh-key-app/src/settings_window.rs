@@ -1122,15 +1122,17 @@ mod tests {
     #[test]
     fn the_tab_order_visits_the_modes_every_row_then_the_tools() {
         let order = focus_order(&Settings::default());
-        assert_eq!(order.len(), 1 + 11 + 3 + 1);
+        assert_eq!(order.len(), 1 + 13 + 3 + 1);
         assert_eq!(order[0], Focus::Mode);
         assert_eq!(order[1], Focus::Row(Field::InputMethod));
         assert_eq!(order[9], Focus::Row(Field::StartAtSignIn));
         assert_eq!(order[10], Focus::Row(Field::Updates));
-        assert_eq!(order[11], Focus::Row(Field::SendReports));
-        assert_eq!(order[12], Focus::Action(Tool::Macros));
-        assert_eq!(order[14], Focus::Action(Tool::Converter));
-        assert_eq!(order[15], Focus::CheckUpdates);
+        assert_eq!(order[11], Focus::Row(Field::SoundEffects));
+        assert_eq!(order[12], Focus::Row(Field::VisualEffects));
+        assert_eq!(order[13], Focus::Row(Field::SendReports));
+        assert_eq!(order[14], Focus::Action(Tool::Macros));
+        assert_eq!(order[16], Focus::Action(Tool::Converter));
+        assert_eq!(order[17], Focus::CheckUpdates);
     }
 
     #[test]

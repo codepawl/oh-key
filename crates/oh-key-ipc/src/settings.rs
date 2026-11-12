@@ -36,6 +36,10 @@ pub struct Settings {
     pub updates: UpdateMode,
     /// Send crash and error reports (never typed text) to the developers.
     pub send_reports: bool,
+    /// A short sound when the mode switches between Vietnamese and English.
+    pub sound_effects: bool,
+    /// A small badge with flying letters by the caret when the mode switches.
+    pub visual_effects: bool,
     /// Lower case executable names of the apps where oh-key stays off.
     pub excluded_apps: Vec<String>,
 }
@@ -49,6 +53,8 @@ impl Default for Settings {
             start_at_sign_in: false,
             updates: UpdateMode::Auto,
             send_reports: true,
+            sound_effects: true,
+            visual_effects: true,
             excluded_apps: Vec::new(),
         }
     }
@@ -164,6 +170,8 @@ pub fn format_settings(settings: &Settings) -> String {
         format!("start_at_sign_in = {}", settings.start_at_sign_in),
         format!("updates = \"{}\"", update_mode_name(settings.updates)),
         format!("send_reports = {}", settings.send_reports),
+        format!("sound_effects = {}", settings.sound_effects),
+        format!("visual_effects = {}", settings.visual_effects),
         format!("excluded_apps = \"{}\"", settings.excluded_apps.join(", ")),
     ];
     let mut text = lines.join("\n");
@@ -191,6 +199,8 @@ fn apply_setting(settings: &mut Settings, key: &str, value: &str) {
         "start_vietnamese" => set_flag(&mut settings.start_vietnamese, value),
         "start_at_sign_in" => set_flag(&mut settings.start_at_sign_in, value),
         "send_reports" => set_flag(&mut settings.send_reports, value),
+        "sound_effects" => set_flag(&mut settings.sound_effects, value),
+        "visual_effects" => set_flag(&mut settings.visual_effects, value),
         "updates" => {
             if let Some(mode) = parse_update_mode(value) {
                 settings.updates = mode;
@@ -318,6 +328,17 @@ mod tests {
     }
 
     #[test]
+    fn effects_are_on_by_default_and_each_can_be_turned_off() {
+        let defaults = Settings::default();
+        assert!(defaults.sound_effects);
+        assert!(defaults.visual_effects);
+        let settings = parse_settings("sound_effects = false\nvisual_effects = off\n");
+        assert!(!settings.sound_effects);
+        assert!(!settings.visual_effects);
+        assert_eq!(parse_settings(&format_settings(&settings)), settings);
+    }
+
+    #[test]
     fn the_old_hook_apps_line_is_ignored() {
         let settings = parse_settings("hook_apps = \"game.exe\"\n");
         assert!(settings.excluded_apps.is_empty());
@@ -362,6 +383,8 @@ mod tests {
                         start_at_sign_in: true,
                         updates: UpdateMode::Notify,
                         send_reports: false,
+                        sound_effects: false,
+                        visual_effects: false,
                         excluded_apps: vec!["game.exe".to_owned(), "terminal.exe".to_owned()],
                     };
                     assert_eq!(parse_settings(&format_settings(&settings)), settings);

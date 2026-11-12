@@ -24,6 +24,10 @@ mod layout;
 #[cfg(windows)]
 mod macros_window;
 #[cfg(windows)]
+mod mode_effects;
+#[cfg(windows)]
+mod mode_flash;
+#[cfg(windows)]
 mod mode_icon;
 #[cfg(windows)]
 mod offscreen;
@@ -39,6 +43,8 @@ mod report;
 mod settings_model;
 #[cfg(windows)]
 mod settings_window;
+#[cfg(windows)]
+mod sound;
 #[cfg(windows)]
 mod startup;
 #[cfg(windows)]
@@ -79,6 +85,19 @@ mod app {
         let arguments: Vec<String> = std::env::args().skip(1).collect();
         if arguments.iter().any(|argument| argument == "--version") {
             println!("oh-key {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        if let Some(position) = arguments
+            .iter()
+            .position(|argument| argument == "--write-sounds")
+        {
+            let folder = arguments
+                .get(position + 1)
+                .map(String::as_str)
+                .unwrap_or(".");
+            if let Err(error) = crate::sound::write_mode_sounds(&PathBuf::from(folder)) {
+                eprintln!("oh-key: {error}");
+            }
             return Ok(());
         }
         if arguments.first().map(String::as_str) == Some("crash-test") {

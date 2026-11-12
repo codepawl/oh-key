@@ -10,7 +10,8 @@ use crate::graphics::Graphics;
 use crate::offscreen::Offscreen;
 use crate::settings_window::Preview;
 use crate::{
-    converter_window, excluded_apps_window, macros_window, mode_icon, settings_window, style, tray,
+    converter_window, excluded_apps_window, macros_window, mode_flash, mode_icon, settings_window,
+    style, tray,
 };
 
 const PREVIEW_WIDTH: u32 = 520;
@@ -26,9 +27,10 @@ pub fn render(graphics: &Graphics, window: &str, path: &Path) -> Result<()> {
         "tray-menu-preview" => render_tray_preview(graphics, path),
         "macros" => macros_window::render_png(graphics, path),
         "converter" => converter_window::render_png(graphics, path),
+        "mode-flash" => mode_flash::render_frames(graphics, path),
         _ => Err(windows::core::Error::new(
             windows::Win32::Foundation::E_INVALIDARG,
-            "window must be settings, settings-dropdown, settings-focus, excluded-apps, macros, converter or tray-menu-preview",
+            "window must be settings, settings-dropdown, settings-focus, excluded-apps, macros, converter, mode-flash or tray-menu-preview",
         )),
     }
 }

@@ -24,8 +24,8 @@ use windows::core::{HSTRING, Result, w};
 use crate::settings_model::INPUT_METHOD_CHOICES;
 use crate::update_service::{self, Notice};
 use crate::{
-    app_log, converter_window, macros_window, mode_icon, persistence, report, settings_window,
-    updater,
+    app_log, converter_window, macros_window, mode_effects, mode_icon, persistence, report,
+    settings_window, updater,
 };
 
 pub const TRAY_CLASS: windows::core::PCWSTR = w!("oh-key.tray");
@@ -300,6 +300,7 @@ impl Tray {
             self.shown_mode_counter = counter;
             self.update_icon(hwnd);
             settings_window::refresh();
+            mode_effects::announce(self.shared.vietnamese());
         }
     }
 

@@ -46,6 +46,8 @@ pub enum Field {
     StartAtSignIn,
     Updates,
     SendReports,
+    SoundEffects,
+    VisualEffects,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -247,6 +249,16 @@ fn system_card(settings: &Settings) -> Vec<Row> {
             choice_index(&UPDATE_CHOICES, settings.updates),
         ),
         switch_row(
+            Field::SoundEffects,
+            "Âm thanh khi đổi V/E",
+            settings.sound_effects,
+        ),
+        switch_row(
+            Field::VisualEffects,
+            "Hiệu ứng khi đổi V/E",
+            settings.visual_effects,
+        ),
+        switch_row(
             Field::SendReports,
             "Gửi báo lỗi tự động",
             settings.send_reports,
@@ -317,6 +329,8 @@ pub fn apply_choice(settings: &mut Settings, field: Field, option: usize) -> Eff
             None => return Effect::Nothing,
         },
         Field::SendReports => settings.send_reports = enabled,
+        Field::SoundEffects => settings.sound_effects = enabled,
+        Field::VisualEffects => settings.visual_effects = enabled,
     }
     Effect::Save
 }
@@ -364,10 +378,12 @@ mod tests {
             Field::StartVietnamese,
             Field::StartAtSignIn,
             Field::SendReports,
+            Field::SoundEffects,
+            Field::VisualEffects,
         ] {
             assert!(switch_fields.contains(&field), "{field:?}");
         }
-        assert_eq!(switch_fields.len(), 7);
+        assert_eq!(switch_fields.len(), 9);
     }
 
     #[test]
@@ -497,9 +513,9 @@ mod tests {
     }
 
     #[test]
-    fn the_cards_hold_three_six_and_two_rows() {
+    fn the_cards_hold_three_six_and_four_rows() {
         let cards = cards(&Settings::default());
-        assert_eq!(card_row_counts(&cards), [3, 6, 2]);
+        assert_eq!(card_row_counts(&cards), [3, 6, 4]);
     }
 
     #[test]

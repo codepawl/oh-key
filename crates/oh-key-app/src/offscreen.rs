@@ -72,14 +72,17 @@ impl Offscreen {
 
     /// Straight-alpha BGRA pixels, the order `CreateIcon` wants.
     pub fn straight_alpha_pixels(&self) -> Result<Vec<u8>> {
-        let stride = self.width * 4;
-        let mut pixels = vec![0u8; (stride * self.height) as usize];
-        unsafe {
-            self.bitmap
-                .CopyPixels(std::ptr::null(), stride, &mut pixels)?
-        };
+        let mut pixels = vec![0u8; (self.width * 4 * self.height) as usize];
+        self.copy_premultiplied_pixels(&mut pixels)?;
         unpremultiply(&mut pixels);
         Ok(pixels)
+    }
+
+    /// Premultiplied BGRA pixels, top row first, the form `UpdateLayeredWindow` wants.
+    /// `pixels` must hold `width * height * 4` bytes.
+    pub fn copy_premultiplied_pixels(&self, pixels: &mut [u8]) -> Result<()> {
+        let stride = self.width * 4;
+        unsafe { self.bitmap.CopyPixels(std::ptr::null(), stride, pixels) }
     }
 
     pub fn save_png(&self, path: &Path) -> Result<()> {
