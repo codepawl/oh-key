@@ -600,8 +600,8 @@ impl KeyFlow {
         self.edits_since_new_key = 0;
         self.echoes_outstanding = 0;
         self.session.reset();
-        for index in 0..self.deferred_keys.len() {
-            let edit = raw_key_edit(self.deferred_keys[index].input);
+        for deferred in &self.deferred_keys {
+            let edit = raw_key_edit(deferred.input);
             sink.send_edit(&edit);
         }
         self.deferred_keys.clear();
