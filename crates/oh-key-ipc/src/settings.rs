@@ -15,6 +15,17 @@ pub enum ToggleHotkey {
     Disabled,
 }
 
+/// What the app does when a newer release exists.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UpdateMode {
+    /// Download, verify and install it once typing has paused.
+    Auto,
+    /// Only tell the user.
+    Notify,
+    /// Never check on its own; the manual check still works.
+    Off,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub engine: Config,
@@ -22,6 +33,9 @@ pub struct Settings {
     /// Start in Vietnamese mode; false starts with the English passthrough.
     pub start_vietnamese: bool,
     pub start_at_sign_in: bool,
+    pub updates: UpdateMode,
+    /// Send crash and error reports (never typed text) to the developers.
+    pub send_reports: bool,
     /// Lower case executable names of the apps where oh-key stays off.
     pub excluded_apps: Vec<String>,
 }
@@ -33,6 +47,8 @@ impl Default for Settings {
             toggle_hotkey: ToggleHotkey::CtrlShift,
             start_vietnamese: true,
             start_at_sign_in: false,
+            updates: UpdateMode::Auto,
+            send_reports: true,
             excluded_apps: Vec::new(),
         }
     }
@@ -58,6 +74,49 @@ pub fn load_settings() -> Settings {
     match std::fs::read_to_string(path) {
         Ok(text) => parse_settings(&text),
         Err(_) => Settings::default(),
+    }
+}
+
+/// Whether a report may be sent. Unlike `load_settings`, this fails closed: a config file
+/// that exists but cannot be read, or a `send_reports` value that is not understood, counts as
+/// "no". Only a missing file (a first start) or a plain "on" allows reports.
+pub fn reports_allowed() -> bool {
+    let Some(path) = config_path() else {
+        return false;
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => reports_allowed_by(&text),
+        Err(error) => error.kind() == io::ErrorKind::NotFound,
+    }
+}
+
+/// The reading of `send_reports` in a config text; the last line wins, as in `parse_settings`.
+pub fn reports_allowed_by(text: &str) -> bool {
+    let mut allowed = true;
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim() != "send_reports" {
+            continue;
+        }
+        match parse_flag(value.trim().trim_matches('"')) {
+            Some(flag) => allowed = flag,
+            None => return false,
+        }
+    }
+    allowed
+}
+
+/// Why `config.toml` could not be read, when it exists but is unreadable. A missing file is
+/// normal (first start) and is not a problem.
+pub fn settings_file_problem() -> Option<String> {
+    let path = config_path()?;
+    match std::fs::read(path) {
+        Ok(_) => None,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        Err(error) => Some(format!("config.toml could not be read: {:?}", error.kind())),
     }
 }
 
@@ -103,6 +162,8 @@ pub fn format_settings(settings: &Settings) -> String {
         ),
         format!("start_vietnamese = {}", settings.start_vietnamese),
         format!("start_at_sign_in = {}", settings.start_at_sign_in),
+        format!("updates = \"{}\"", update_mode_name(settings.updates)),
+        format!("send_reports = {}", settings.send_reports),
         format!("excluded_apps = \"{}\"", settings.excluded_apps.join(", ")),
     ];
     let mut text = lines.join("\n");
@@ -129,6 +190,12 @@ fn apply_setting(settings: &mut Settings, key: &str, value: &str) {
         "macro_enabled" => set_flag(&mut engine.macro_enabled, value),
         "start_vietnamese" => set_flag(&mut settings.start_vietnamese, value),
         "start_at_sign_in" => set_flag(&mut settings.start_at_sign_in, value),
+        "send_reports" => set_flag(&mut settings.send_reports, value),
+        "updates" => {
+            if let Some(mode) = parse_update_mode(value) {
+                settings.updates = mode;
+            }
+        }
         "toggle_hotkey" => {
             if let Some(hotkey) = parse_toggle_hotkey(value) {
                 settings.toggle_hotkey = hotkey;
@@ -158,6 +225,23 @@ fn parse_toggle_hotkey(value: &str) -> Option<ToggleHotkey> {
     }
 }
 
+fn parse_update_mode(value: &str) -> Option<UpdateMode> {
+    match value.to_ascii_lowercase().as_str() {
+        "auto" => Some(UpdateMode::Auto),
+        "notify" => Some(UpdateMode::Notify),
+        "off" => Some(UpdateMode::Off),
+        _ => None,
+    }
+}
+
+fn update_mode_name(mode: UpdateMode) -> &'static str {
+    match mode {
+        UpdateMode::Auto => "auto",
+        UpdateMode::Notify => "notify",
+        UpdateMode::Off => "off",
+    }
+}
+
 fn parse_excluded_apps(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -166,11 +250,17 @@ fn parse_excluded_apps(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn set_flag(target: &mut bool, value: &str) {
+fn parse_flag(value: &str) -> Option<bool> {
     match value.to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" | "1" => *target = true,
-        "false" | "no" | "off" | "0" => *target = false,
-        _ => {}
+        "true" | "yes" | "on" | "1" => Some(true),
+        "false" | "no" | "off" | "0" => Some(false),
+        _ => None,
+    }
+}
+
+fn set_flag(target: &mut bool, value: &str) {
+    if let Some(flag) = parse_flag(value) {
+        *target = flag;
     }
 }
 
@@ -270,12 +360,108 @@ mod tests {
                         toggle_hotkey,
                         start_vietnamese: false,
                         start_at_sign_in: true,
+                        updates: UpdateMode::Notify,
+                        send_reports: false,
                         excluded_apps: vec!["game.exe".to_owned(), "terminal.exe".to_owned()],
                     };
                     assert_eq!(parse_settings(&format_settings(&settings)), settings);
                 }
             }
         }
+    }
+
+    #[test]
+    fn updates_default_to_auto_and_reports_to_on() {
+        let settings = Settings::default();
+        assert_eq!(settings.updates, UpdateMode::Auto);
+        assert!(settings.send_reports);
+    }
+
+    #[test]
+    fn an_old_config_without_the_new_keys_keeps_the_defaults() {
+        let settings = parse_settings(
+            "input_method = \"vni\"
+start_at_sign_in = true
+excluded_apps = \"game.exe\"
+",
+        );
+        assert_eq!(settings.updates, UpdateMode::Auto);
+        assert!(settings.send_reports);
+        assert_eq!(settings.excluded_apps, ["game.exe"]);
+    }
+
+    #[test]
+    fn every_update_mode_round_trips_and_bad_values_are_ignored() {
+        for mode in [UpdateMode::Auto, UpdateMode::Notify, UpdateMode::Off] {
+            let settings = Settings {
+                updates: mode,
+                ..Settings::default()
+            };
+            assert_eq!(parse_settings(&format_settings(&settings)).updates, mode);
+        }
+        assert_eq!(
+            parse_settings(
+                "updates = sometimes
+"
+            )
+            .updates,
+            UpdateMode::Auto
+        );
+        assert_eq!(
+            parse_settings(
+                "updates = OFF
+"
+            )
+            .updates,
+            UpdateMode::Off
+        );
+    }
+
+    #[test]
+    fn reports_are_allowed_only_when_the_setting_is_plainly_on_or_absent() {
+        assert!(reports_allowed_by(""));
+        assert!(reports_allowed_by(
+            "send_reports = true
+"
+        ));
+        assert!(reports_allowed_by(
+            "send_reports = \"on\"
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = false
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = off
+"
+        ));
+    }
+
+    #[test]
+    fn a_value_that_is_not_understood_turns_reports_off() {
+        assert!(!reports_allowed_by(
+            "send_reports = disabled
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = none
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = opt-out
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = true
+send_reports = maybe
+"
+        ));
+        assert!(!reports_allowed_by(
+            "send_reports = true
+send_reports = false
+"
+        ));
     }
 
     #[test]

@@ -340,5 +340,9 @@ do {
     checkNoRangeViolations("cursor smaller than the word", field)
 }
 
+let reportingResult = runReportingTests()
+checks += reportingResult.checks
+failures += reportingResult.failures
+
 print("\n\(checks - failures) of \(checks) passed")
 exit(failures == 0 ? 0 : 1)

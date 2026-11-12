@@ -3,7 +3,7 @@
 //! settings. No drawing here, so it is all unit tested.
 
 use oh_key_engine::{InputMethod, ToneStyle};
-use oh_key_ipc::{Settings, ToggleHotkey};
+use oh_key_ipc::{Settings, ToggleHotkey, UpdateMode};
 
 use crate::icons;
 
@@ -20,6 +20,11 @@ const HOTKEY_CHOICES: [(ToggleHotkey, &str); 3] = [
     (ToggleHotkey::CtrlShift, "Ctrl + Shift"),
     (ToggleHotkey::AltZ, "Alt + Z"),
     (ToggleHotkey::Disabled, "Tắt"),
+];
+const UPDATE_CHOICES: [(UpdateMode, &str); 3] = [
+    (UpdateMode::Auto, "Tự động"),
+    (UpdateMode::Notify, "Chỉ báo"),
+    (UpdateMode::Off, "Tắt"),
 ];
 
 /// A switch's two options, in the order `apply_choice` reads them.
@@ -39,6 +44,8 @@ pub enum Field {
     MacroEnabled,
     StartVietnamese,
     StartAtSignIn,
+    Updates,
+    SendReports,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -231,9 +238,29 @@ fn switches_card(settings: &Settings) -> Vec<Row> {
     ]
 }
 
-/// The two cards in reading order, built from the current settings.
-pub fn cards(settings: &Settings) -> [Vec<Row>; 2] {
-    [typing_card(settings), switches_card(settings)]
+fn system_card(settings: &Settings) -> Vec<Row> {
+    vec![
+        dropdown_row(
+            Field::Updates,
+            "Cập nhật",
+            labels(UPDATE_CHOICES.iter().map(|(_, label)| *label)),
+            choice_index(&UPDATE_CHOICES, settings.updates),
+        ),
+        switch_row(
+            Field::SendReports,
+            "Gửi báo lỗi tự động",
+            settings.send_reports,
+        ),
+    ]
+}
+
+/// The three cards in reading order, built from the current settings.
+pub fn cards(settings: &Settings) -> [Vec<Row>; 3] {
+    [
+        typing_card(settings),
+        switches_card(settings),
+        system_card(settings),
+    ]
 }
 
 pub fn card_row_counts(cards: &[Vec<Row>]) -> Vec<usize> {
@@ -285,6 +312,11 @@ pub fn apply_choice(settings: &mut Settings, field: Field, option: usize) -> Eff
             settings.start_at_sign_in = enabled;
             return Effect::SaveAndApplyStartup;
         }
+        Field::Updates => match UPDATE_CHOICES.get(option) {
+            Some((mode, _)) => settings.updates = *mode,
+            None => return Effect::Nothing,
+        },
+        Field::SendReports => settings.send_reports = enabled,
     }
     Effect::Save
 }
@@ -331,10 +363,11 @@ mod tests {
             Field::MacroEnabled,
             Field::StartVietnamese,
             Field::StartAtSignIn,
+            Field::SendReports,
         ] {
             assert!(switch_fields.contains(&field), "{field:?}");
         }
-        assert_eq!(switch_fields.len(), 6);
+        assert_eq!(switch_fields.len(), 7);
     }
 
     #[test]
@@ -414,7 +447,12 @@ mod tests {
     #[test]
     fn an_option_past_the_end_changes_nothing() {
         let mut settings = Settings::default();
-        for field in [Field::InputMethod, Field::ToneStyle, Field::ToggleHotkey] {
+        for field in [
+            Field::InputMethod,
+            Field::ToneStyle,
+            Field::ToggleHotkey,
+            Field::Updates,
+        ] {
             assert_eq!(apply_choice(&mut settings, field, 9), Effect::Nothing);
         }
         assert_eq!(settings, Settings::default());
@@ -459,8 +497,39 @@ mod tests {
     }
 
     #[test]
-    fn the_cards_hold_three_and_six_rows() {
+    fn the_cards_hold_three_six_and_two_rows() {
         let cards = cards(&Settings::default());
-        assert_eq!(card_row_counts(&cards), [3, 6]);
+        assert_eq!(card_row_counts(&cards), [3, 6, 2]);
+    }
+
+    #[test]
+    fn the_update_dropdown_reaches_all_three_modes() {
+        let row = find_row(&Settings::default(), Field::Updates);
+        let Control::Dropdown { options, selected } = row.control else {
+            panic!("updates is a dropdown");
+        };
+        assert_eq!(options, ["Tự động", "Chỉ báo", "Tắt"]);
+        assert_eq!(selected, 0);
+        let mut settings = Settings::default();
+        assert_eq!(apply_choice(&mut settings, Field::Updates, 1), Effect::Save);
+        assert_eq!(settings.updates, UpdateMode::Notify);
+        apply_choice(&mut settings, Field::Updates, 2);
+        assert_eq!(settings.updates, UpdateMode::Off);
+        apply_choice(&mut settings, Field::Updates, 0);
+        assert_eq!(settings.updates, UpdateMode::Auto);
+    }
+
+    #[test]
+    fn the_report_switch_is_on_by_default_and_follows_the_setting() {
+        assert_eq!(
+            find_row(&Settings::default(), Field::SendReports).control,
+            Control::Switch { on: true }
+        );
+        let mut settings = Settings::default();
+        assert_eq!(
+            apply_choice(&mut settings, Field::SendReports, SWITCH_OFF),
+            Effect::Save
+        );
+        assert!(!settings.send_reports);
     }
 }

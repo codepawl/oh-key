@@ -7,8 +7,8 @@ use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::INFINITE;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIIF_WARNING, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
@@ -22,12 +22,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, Result, w};
 
 use crate::settings_model::INPUT_METHOD_CHOICES;
-use crate::{converter_window, macros_window, mode_icon, persistence, settings_window};
+use crate::update_service::{self, Notice};
+use crate::{
+    app_log, converter_window, macros_window, mode_icon, persistence, report, settings_window,
+    updater,
+};
 
 pub const TRAY_CLASS: windows::core::PCWSTR = w!("oh-key.tray");
 const MESSAGE_TRAY: u32 = WM_APP + 1;
 /// Sent by a second launch of the app, so it opens the control panel of the running one.
 pub const MESSAGE_OPEN_SETTINGS: u32 = WM_APP + 2;
+/// Posted by the update thread when it queued a notice for the tray to show.
+const MESSAGE_UPDATE_NOTICE: u32 = WM_APP + 3;
+/// What the tray icon sends when its balloon is clicked.
+const NOTIFICATION_BALLOON_CLICKED: u32 = 0x0405;
 /// Only when the mode event could not be created: check for a mode change this often.
 const MODE_FALLBACK_POLL_MILLISECONDS: u32 = 1000;
 
@@ -37,6 +45,9 @@ const MENU_SETTINGS: usize = 3;
 const MENU_MACROS: usize = 4;
 const MENU_CONVERTER: usize = 5;
 const MENU_QUIT: usize = 6;
+const MENU_CHECK_UPDATES: usize = 7;
+const MENU_INSTALL_UPDATE: usize = 8;
+const MENU_OPEN_LOG: usize = 9;
 const MENU_METHOD_FIRST: usize = 10;
 
 pub const LABEL_VIETNAMESE: &str = "Tiếng Việt";
@@ -46,12 +57,43 @@ pub const LABEL_SETTINGS: &str = "Bảng điều khiển…";
 pub const LABEL_MACROS: &str = "Gõ tắt…";
 pub const LABEL_CONVERTER: &str = "Chuyển mã…";
 pub const LABEL_QUIT: &str = "Thoát";
+pub const LABEL_CHECK_UPDATES: &str = "Kiểm tra cập nhật";
+pub const LABEL_OPEN_LOG: &str = "Mở thư mục log";
+
+pub fn label_install_update(version: &str) -> String {
+    format!("Có bản mới {version} — Cập nhật")
+}
+
+/// What a balloon says for a notice: title, text and whether it is a warning. A restart into
+/// a new version needs no balloon.
+fn balloon_for(notice: &Notice) -> Option<(String, String, bool)> {
+    match notice {
+        Notice::UpToDate => Some((
+            "oh-key".to_string(),
+            "Bạn đang dùng bản mới nhất.".to_string(),
+            false,
+        )),
+        Notice::Available(version) => Some((
+            "Có bản mới".to_string(),
+            format!("oh-key {version} đã có. Bấm vào đây để cập nhật."),
+            false,
+        )),
+        Notice::Failed(reason) => Some((
+            "Không cập nhật được".to_string(),
+            reason.chars().take(200).collect(),
+            true,
+        )),
+        Notice::Installed(_) => None,
+    }
+}
 
 /// Everything the window procedure needs, owned by the window through its user data.
 struct Tray {
     shared: SharedState,
     shown_mode_counter: u64,
     taskbar_created: u32,
+    /// Whether the balloon on screen offers an update, so a click on it installs.
+    balloon_offers_update: bool,
 }
 
 /// The hidden window's title; a second launch finds the running one by it.
@@ -77,7 +119,7 @@ fn tooltip(vietnamese: bool) -> &'static str {
 }
 
 /// Creates the hidden window and the tray icon, then runs the message loop until quit.
-pub fn run(shared: SharedState) -> Result<()> {
+pub fn run(shared: SharedState, restarted_after_crash: bool) -> Result<()> {
     let instance = unsafe { GetModuleHandleW(None)? };
     let class = WNDCLASSEXW {
         cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -91,6 +133,7 @@ pub fn run(shared: SharedState) -> Result<()> {
         shared,
         shown_mode_counter: 0,
         taskbar_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
+        balloon_offers_update: false,
     });
     let tray_pointer = Box::into_raw(tray);
     // A top-level window that is never shown: TaskbarCreated does not reach message-only windows.
@@ -114,9 +157,27 @@ pub fn run(shared: SharedState) -> Result<()> {
     let tray = unsafe { &mut *tray_pointer };
     tray.shown_mode_counter = tray.shared.mode_counter();
     tray.add_icon(hwnd);
+    if restarted_after_crash {
+        tray.show_balloon(
+            hwnd,
+            "oh-key đã khởi động lại",
+            "oh-key vừa dừng đột ngột và đã tự khởi động lại.",
+            true,
+        );
+    }
+    start_update_checks(hwnd);
     run_message_loop(tray, hwnd);
     drop(unsafe { Box::from_raw(tray_pointer) });
     Ok(())
+}
+
+/// Measurement builds (`OHKEY_NO_HOOK`, `OHKEY_NO_UPDATES`) never check for updates.
+fn start_update_checks(hwnd: HWND) {
+    let disabled = |name: &str| std::env::var_os(name).is_some_and(|value| value == "1");
+    if disabled("OHKEY_NO_HOOK") || disabled("OHKEY_NO_UPDATES") {
+        return;
+    }
+    update_service::start(hwnd, MESSAGE_UPDATE_NOTICE);
 }
 
 /// Sleeps until a window message or the mode event arrives; no timer wakes it while idle.
@@ -160,12 +221,17 @@ unsafe extern "system" fn window_proc(
             match (lparam.0 & 0xFFFF) as u32 {
                 WM_LBUTTONUP => tray.toggle_mode(hwnd),
                 WM_RBUTTONUP => tray.show_menu(hwnd),
+                NOTIFICATION_BALLOON_CLICKED => tray.balloon_clicked(),
                 _ => {}
             }
             LRESULT(0)
         }
         MESSAGE_OPEN_SETTINGS => {
             let _ = settings_window::open();
+            LRESULT(0)
+        }
+        MESSAGE_UPDATE_NOTICE => {
+            tray.show_update_notices(hwnd);
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -249,13 +315,81 @@ impl Tray {
         settings_window::refresh();
     }
 
+    /// A balloon in the notification area. The fields are filled in local buffers and moved in
+    /// whole, because the struct is packed on x86.
+    fn show_balloon(&mut self, hwnd: HWND, title: &str, text: &str, warning: bool) {
+        let mut title_buffer = [0u16; 64];
+        let mut text_buffer = [0u16; 256];
+        fill_wide(&mut title_buffer, title);
+        fill_wide(&mut text_buffer, text);
+        let data = NOTIFYICONDATAW {
+            cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: NIF_INFO,
+            szInfo: text_buffer,
+            szInfoTitle: title_buffer,
+            dwInfoFlags: if warning { NIIF_WARNING } else { NIIF_INFO },
+            ..Default::default()
+        };
+        let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) };
+    }
+
+    fn show_update_notices(&mut self, hwnd: HWND) {
+        settings_window::refresh();
+        for notice in update_service::take_notices() {
+            if let Notice::Installed(version) = &notice {
+                self.restart_into(hwnd, version);
+                continue;
+            }
+            self.balloon_offers_update = matches!(notice, Notice::Available(_));
+            if let Some((title, text, warning)) = balloon_for(&notice) {
+                self.show_balloon(hwnd, &title, &text, warning);
+            }
+        }
+    }
+
+    /// The new exe is in place: start it and leave. If it cannot start, the files are put
+    /// back and this version keeps running.
+    fn restart_into(&mut self, hwnd: HWND, version: &str) {
+        match updater::restart_into_new_version() {
+            Ok(()) => {
+                app_log::write(&format!("restarting into {version}"));
+                unsafe {
+                    let _ = DestroyWindow(hwnd);
+                }
+            }
+            Err(error) => {
+                let message = format!("update to {version} failed: {error}");
+                app_log::write(&message);
+                report::submit(report::ReportEvent {
+                    write_to_log: false,
+                    ..report::ReportEvent::new(report::EventKind::UpdateFailed, &message)
+                });
+                self.show_balloon(hwnd, "Không cập nhật được", &error, true);
+            }
+        }
+    }
+
+    fn balloon_clicked(&mut self) {
+        if self.balloon_offers_update {
+            self.balloon_offers_update = false;
+            update_service::install_pending();
+        }
+    }
+
     fn show_menu(&mut self, hwnd: HWND) {
         let vietnamese = self.shared.vietnamese();
         let current_method: InputMethod = load_settings().engine.input_method;
         let Ok(menu) = (unsafe { CreatePopupMenu() }) else {
             return;
         };
-        build_menu(menu, vietnamese, current_method);
+        build_menu(
+            menu,
+            vietnamese,
+            current_method,
+            update_service::pending_version().as_deref(),
+        );
         let mut cursor = POINT::default();
         unsafe {
             let _ = GetCursorPos(&mut cursor);
@@ -288,6 +422,9 @@ impl Tray {
             }
             MENU_MACROS => macros_window::open(None),
             MENU_CONVERTER => converter_window::open(None),
+            MENU_CHECK_UPDATES => update_service::check_now(),
+            MENU_INSTALL_UPDATE => update_service::install_pending(),
+            MENU_OPEN_LOG => app_log::open_folder(),
             MENU_QUIT => unsafe {
                 let _ = DestroyWindow(hwnd);
             },
@@ -317,7 +454,20 @@ fn append_item(
     let _ = unsafe { AppendMenuW(menu, flags, id, &HSTRING::from(label)) };
 }
 
-fn build_menu(menu: HMENU, vietnamese: bool, current_method: InputMethod) {
+/// Copies `text` into a fixed buffer, leaving room for the closing zero.
+fn fill_wide(buffer: &mut [u16], text: &str) {
+    let usable = buffer.len() - 1;
+    for (slot, unit) in buffer.iter_mut().take(usable).zip(text.encode_utf16()) {
+        *slot = unit;
+    }
+}
+
+fn build_menu(
+    menu: HMENU,
+    vietnamese: bool,
+    current_method: InputMethod,
+    pending_update: Option<&str>,
+) {
     append_item(
         menu,
         checked_if(vietnamese),
@@ -347,6 +497,17 @@ fn build_menu(menu: HMENU, vietnamese: bool, current_method: InputMethod) {
     append_item(menu, MF_STRING, MENU_SETTINGS, LABEL_SETTINGS);
     append_item(menu, MF_STRING, MENU_MACROS, LABEL_MACROS);
     append_item(menu, MF_STRING, MENU_CONVERTER, LABEL_CONVERTER);
+    let _ = unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, None) };
+    if let Some(version) = pending_update {
+        append_item(
+            menu,
+            MF_STRING,
+            MENU_INSTALL_UPDATE,
+            &label_install_update(version),
+        );
+    }
+    append_item(menu, MF_STRING, MENU_CHECK_UPDATES, LABEL_CHECK_UPDATES);
+    append_item(menu, MF_STRING, MENU_OPEN_LOG, LABEL_OPEN_LOG);
     let _ = unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, None) };
     append_item(menu, MF_STRING, MENU_QUIT, LABEL_QUIT);
 }
@@ -380,8 +541,38 @@ mod tests {
             MENU_MACROS,
             MENU_CONVERTER,
             MENU_QUIT,
+            MENU_CHECK_UPDATES,
+            MENU_INSTALL_UPDATE,
+            MENU_OPEN_LOG,
         ];
         assert!(fixed.iter().all(|id| *id < MENU_METHOD_FIRST));
+        let mut sorted = fixed.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), fixed.len());
+    }
+
+    #[test]
+    fn the_update_item_names_the_version() {
+        assert_eq!(label_install_update("0.3.0"), "Có bản mới 0.3.0 — Cập nhật");
+    }
+
+    #[test]
+    fn each_notice_has_a_balloon_except_the_restart() {
+        let (_, _, warning) = balloon_for(&Notice::Failed("no network".into())).unwrap();
+        assert!(warning);
+        let (_, text, warning) = balloon_for(&Notice::Available("0.3.0".into())).unwrap();
+        assert!(text.contains("0.3.0") && !warning);
+        assert!(balloon_for(&Notice::UpToDate).is_some());
+        assert!(balloon_for(&Notice::Installed("0.3.0".into())).is_none());
+    }
+
+    #[test]
+    fn a_long_balloon_text_is_cut_and_the_last_slot_is_left_for_the_zero() {
+        let mut buffer = [0xffffu16; 8];
+        fill_wide(&mut buffer, "abcdefghijkl");
+        assert_eq!(buffer[6], u16::from(b'g'));
+        assert_eq!(buffer[7], 0xffff);
     }
 
     #[test]

@@ -547,8 +547,6 @@ impl KeyFlow {
     }
 
     /// How many times the circuit breaker stopped a loop.
-    #[allow(dead_code)]
-    #[cfg(test)]
     pub fn breaker_trips(&self) -> usize {
         self.breaker_trips
     }
@@ -1125,6 +1123,60 @@ pub fn window_exe_name(window: HWND) -> Option<String> {
 /// The most program names remembered by process id; a full cache starts over.
 const EXE_NAME_CACHE_LIMIT: usize = 64;
 
+/// Something the hook noticed that is worth a log line or a report. Counts only: never a key,
+/// a word or the program being typed into.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+pub enum HookDiagnostic {
+    Reinstalled,
+    BreakerTripped { total: usize },
+    SendInputShort { sent: usize, expected: usize },
+}
+
+static DIAGNOSTIC_HANDLER: std::sync::OnceLock<fn(HookDiagnostic)> = std::sync::OnceLock::new();
+/// A diagnostic of one kind is passed on at most this often, so a stuck loop cannot flood.
+const DIAGNOSTIC_PAUSE_MILLISECONDS: i32 = 10_000;
+static LAST_BREAKER_DIAGNOSTIC_TICK: AtomicU32 = AtomicU32::new(0);
+static LAST_SHORT_SEND_DIAGNOSTIC_TICK: AtomicU32 = AtomicU32::new(0);
+static BREAKER_TRIPS_SEEN: AtomicUsize = AtomicUsize::new(0);
+
+/// The tray app sets this once; the examples never do, and then nothing is passed on.
+#[allow(dead_code)]
+pub fn set_diagnostic_handler(handler: fn(HookDiagnostic)) {
+    let _ = DIAGNOSTIC_HANDLER.set(handler);
+}
+
+fn pass_on_diagnostic(diagnostic: HookDiagnostic) {
+    if let Some(handler) = DIAGNOSTIC_HANDLER.get() {
+        handler(diagnostic);
+    }
+}
+
+fn pause_over(last_tick: &AtomicU32) -> bool {
+    let now = unsafe { GetTickCount() };
+    let last = last_tick.load(Ordering::Relaxed);
+    if last != 0 && (now.wrapping_sub(last) as i32) < DIAGNOSTIC_PAUSE_MILLISECONDS {
+        return false;
+    }
+    last_tick.store(now.max(1), Ordering::Relaxed);
+    true
+}
+
+fn note_breaker_trips(total: usize) {
+    if total == BREAKER_TRIPS_SEEN.swap(total, Ordering::Relaxed) {
+        return;
+    }
+    if pause_over(&LAST_BREAKER_DIAGNOSTIC_TICK) {
+        pass_on_diagnostic(HookDiagnostic::BreakerTripped { total });
+    }
+}
+
+fn note_short_send(sent: usize, expected: usize) {
+    if pause_over(&LAST_SHORT_SEND_DIAGNOSTIC_TICK) {
+        pass_on_diagnostic(HookDiagnostic::SendInputShort { sent, expected });
+    }
+}
+
 /// Sends the hook's output with `SendInput`.
 struct SendInputSink;
 
@@ -1488,7 +1540,11 @@ fn send_edit(edit: &TextEdit) -> usize {
     if events.is_empty() {
         return 0;
     }
-    unsafe { SendInput(&events, size_of::<INPUT>() as i32) as usize }
+    let sent = unsafe { SendInput(&events, size_of::<INPUT>() as i32) as usize };
+    if sent < events.len() {
+        note_short_send(sent, events.len());
+    }
+    sent
 }
 
 const TIMING_CAPACITY: usize = 16384;
@@ -1572,9 +1628,11 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
         LAST_CALLBACK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
         let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let mut swallowed = STATE.with(|cell| match cell.try_borrow_mut() {
-            Ok(mut guard) => guard
-                .as_mut()
-                .is_some_and(|state| state.handle_event(wparam.0 as u32, event)),
+            Ok(mut guard) => guard.as_mut().is_some_and(|state| {
+                let swallowed = state.handle_event(wparam.0 as u32, event);
+                note_breaker_trips(state.flow.breaker_trips());
+                swallowed
+            }),
             Err(_) => false,
         });
         let elapsed = started.elapsed();
@@ -1756,6 +1814,7 @@ fn reinstall_hook_if_removed() {
     // window switch.
     if installed.is_some() {
         LAST_REINSTALL_TICK.with(|cell| cell.set(Some(now)));
+        pass_on_diagnostic(HookDiagnostic::Reinstalled);
     }
     INSTALLED_HOOK.with(|cell| cell.set(installed));
     // A key-up that arrived while the hook was gone never reached the flow, and keys that

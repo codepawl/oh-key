@@ -88,6 +88,7 @@ final class OhKeyController: IMKInputController {
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(menuItem("Mở thư mục cấu hình", action: #selector(openConfigFolder(_:)), checked: false, tag: -1))
+        menu.addItem(menuItem(Updater.menuTitle, action: #selector(checkForUpdates(_:)), checked: false, tag: -1))
         return menu
     }
 
@@ -108,6 +109,10 @@ final class OhKeyController: IMKInputController {
         let dictionary = sender as? [String: Any]
         guard let item = (sender as? NSMenuItem) ?? (dictionary?["IMKCommandMenuItem"] as? NSMenuItem) else { return }
         editor.selectInputMethod(UInt32(item.tag))
+    }
+
+    @objc private func checkForUpdates(_ sender: Any?) {
+        Updater.menuItemChosen()
     }
 
     @objc private func openConfigFolder(_ sender: Any?) {

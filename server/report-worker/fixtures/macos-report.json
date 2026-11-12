@@ -1,0 +1,1 @@
+{"app":"oh-key","app_version":"0.1.0","platform":"macos","os_version":"macOS 14.5.0","arch":"arm64","install_id":"11111111-2222-4333-8444-555555555555","kind":"crash","message":"signal SIGSEGV","backtrace":["$s6oh_key8UpdaterO5startyyFZ"],"counts":{"frames":1},"log_lines":["1700000000 crash in 0.1.0: signal SIGSEGV"]}

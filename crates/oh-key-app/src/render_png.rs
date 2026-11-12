@@ -14,7 +14,7 @@ use crate::{
 };
 
 const PREVIEW_WIDTH: u32 = 520;
-const PREVIEW_HEIGHT: u32 = 360;
+const PREVIEW_HEIGHT: u32 = 400;
 const PREVIEW_ICON_SIZE: f32 = 64.0;
 
 pub fn render(graphics: &Graphics, window: &str, path: &Path) -> Result<()> {
@@ -65,6 +65,8 @@ fn render_tray_preview(graphics: &Graphics, path: &Path) -> Result<()> {
         tray::LABEL_SETTINGS,
         tray::LABEL_MACROS,
         tray::LABEL_CONVERTER,
+        tray::LABEL_CHECK_UPDATES,
+        tray::LABEL_OPEN_LOG,
         tray::LABEL_QUIT,
     ];
     let mut top = 160.0;

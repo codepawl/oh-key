@@ -40,7 +40,7 @@ use crate::offscreen::Offscreen;
 use crate::settings_model::{self, Control, Effect, Field, Row, Tool};
 use crate::{
     converter_window, excluded_apps_window, icons, macros_window, mode_icon, persistence, startup,
-    style,
+    style, update_service,
 };
 use oh_key_ipc::{Settings, SharedState};
 
@@ -52,6 +52,8 @@ enum Target {
     Chip(Field, usize),
     Switch(Field),
     Action(Tool),
+    /// The "Kiểm tra cập nhật" button in the title bar.
+    CheckUpdates,
     PopupItem(Field, usize),
 }
 
@@ -62,6 +64,7 @@ enum Focus {
     Mode,
     Row(Field),
     Action(Tool),
+    CheckUpdates,
 }
 
 /// The list opened from a dropdown, and which of its items is lit.
@@ -79,6 +82,8 @@ struct View<'a> {
     /// Only set while the keyboard is driving, so a mouse click leaves no ring.
     focus_ring: Option<Focus>,
     popup: Option<Popup>,
+    /// A manual update check is running, so the button says so.
+    checking_for_updates: bool,
 }
 
 /// Set while the window is open, so a second request brings it forward.
@@ -394,6 +399,7 @@ fn focus_order(settings: &Settings) -> Vec<Focus> {
     for action in settings_model::actions() {
         order.push(Focus::Action(action.tool));
     }
+    order.push(Focus::CheckUpdates);
     order
 }
 
@@ -419,6 +425,7 @@ fn focus_of(target: Target) -> Option<Focus> {
             Some(Focus::Row(field))
         }
         Target::Action(tool) => Some(Focus::Action(tool)),
+        Target::CheckUpdates => Some(Focus::CheckUpdates),
         Target::PopupItem(..) => None,
     }
 }
@@ -489,6 +496,7 @@ impl SettingsWindow {
             Target::Chip(field, option) => self.choose(field, option),
             Target::Switch(field) => self.choose_next(field),
             Target::Action(tool) => self.open_tool(tool),
+            Target::CheckUpdates => self.check_for_updates(),
             Target::PopupItem(..) => {}
         }
     }
@@ -546,6 +554,7 @@ impl SettingsWindow {
             Some(Focus::Mode) => self.set_mode(!self.vietnamese()),
             Some(Focus::Row(field)) => self.activate_row(field),
             Some(Focus::Action(tool)) => self.open_tool(tool),
+            Some(Focus::CheckUpdates) => self.check_for_updates(),
             None => {}
         }
     }
@@ -571,7 +580,7 @@ impl SettingsWindow {
                     self.choose(field, option);
                 }
             }
-            Some(Focus::Action(_)) | None => {}
+            Some(Focus::Action(_) | Focus::CheckUpdates) | None => {}
         }
     }
 
@@ -609,6 +618,12 @@ impl SettingsWindow {
         }
     }
 
+    /// The result comes back as a balloon from the tray, and the button repaints then.
+    fn check_for_updates(&mut self) {
+        update_service::check_now();
+        self.paint();
+    }
+
     fn open_tool(&self, tool: Tool) {
         let owner = Some(self.hwnd);
         match tool {
@@ -625,6 +640,7 @@ impl SettingsWindow {
             hovered: self.hit_at(self.pointer),
             focus_ring: self.focus.filter(|_| self.focus_visible),
             popup: self.popup,
+            checking_for_updates: update_service::checking(),
         };
         let hits = draw(&self.target, &self.graphics, &view);
         self.hits = hits;
@@ -731,7 +747,7 @@ impl Scene<'_> {
         self.view.hovered == Some(target)
     }
 
-    fn draw_title_bar(&self) {
+    fn draw_title_bar(&mut self) {
         let spark = Rect {
             left: geometry::MARGIN - 8.0,
             top: 0.0,
@@ -751,13 +767,42 @@ impl Scene<'_> {
         );
         let version = format!("v{}", settings_model::VERSION);
         let version_width = self.graphics.measure(&version).0;
+        let version_left = right_edge - version_width;
         self.label_centred(
             &version,
-            right_edge - version_width,
+            version_left,
             geometry::WIDTH,
             vertical,
             &self.brushes.dim,
         );
+        self.draw_check_updates_button(version_left);
+    }
+
+    /// A quiet text button left of the version.
+    fn draw_check_updates_button(&mut self, version_left: f32) {
+        let label = if self.view.checking_for_updates {
+            "Đang kiểm tra…"
+        } else {
+            "Kiểm tra cập nhật"
+        };
+        let text_width = self.graphics.measure(label).0;
+        let rect = geometry::title_button_rect(version_left, text_width);
+        let brushes = self.brushes;
+        let hovered = self.is_hovered(Target::CheckUpdates);
+        if hovered {
+            self.fill(rect, style::CONTROL_RADIUS, &brushes.hover);
+        }
+        let tone = if hovered { &brushes.text } else { &brushes.dim };
+        self.label_centred(
+            label,
+            rect.left + geometry::TITLE_BUTTON_PADDING,
+            rect.right,
+            (rect.top, rect.bottom),
+            tone,
+        );
+        self.hits.push((Target::CheckUpdates, rect));
+        self.focus_shapes
+            .push((Focus::CheckUpdates, rect, style::CONTROL_RADIUS));
     }
 
     fn draw_mode_buttons(&mut self, frame: &geometry::Frame) {
@@ -1064,6 +1109,7 @@ pub fn render_png(
             field: Field::InputMethod,
             highlighted: 1,
         }),
+        checking_for_updates: false,
     };
     draw(&offscreen.target, graphics, &view);
     offscreen.save_png(path)
@@ -1076,12 +1122,15 @@ mod tests {
     #[test]
     fn the_tab_order_visits_the_modes_every_row_then_the_tools() {
         let order = focus_order(&Settings::default());
-        assert_eq!(order.len(), 1 + 9 + 3);
+        assert_eq!(order.len(), 1 + 11 + 3 + 1);
         assert_eq!(order[0], Focus::Mode);
         assert_eq!(order[1], Focus::Row(Field::InputMethod));
         assert_eq!(order[9], Focus::Row(Field::StartAtSignIn));
-        assert_eq!(order[10], Focus::Action(Tool::Macros));
-        assert_eq!(order[12], Focus::Action(Tool::Converter));
+        assert_eq!(order[10], Focus::Row(Field::Updates));
+        assert_eq!(order[11], Focus::Row(Field::SendReports));
+        assert_eq!(order[12], Focus::Action(Tool::Macros));
+        assert_eq!(order[14], Focus::Action(Tool::Converter));
+        assert_eq!(order[15], Focus::CheckUpdates);
     }
 
     #[test]
@@ -1109,6 +1158,7 @@ mod tests {
             Some(Focus::Row(Field::ToneStyle))
         );
         assert_eq!(focus_of(Target::Mode(false)), Some(Focus::Mode));
+        assert_eq!(focus_of(Target::CheckUpdates), Some(Focus::CheckUpdates));
         assert_eq!(focus_of(Target::PopupItem(Field::InputMethod, 0)), None);
     }
 }

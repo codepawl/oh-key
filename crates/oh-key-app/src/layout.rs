@@ -94,6 +94,10 @@ pub mod settings {
     pub const POPUP_PADDING: f32 = 4.0;
     pub const POPUP_ITEM_HEIGHT: f32 = 32.0;
     pub const POPUP_OFFSET: f32 = 4.0;
+    /// The text button in the title bar, left of the version.
+    pub const TITLE_BUTTON_PADDING: f32 = 8.0;
+    pub const TITLE_BUTTON_HEIGHT: f32 = 26.0;
+    pub const TITLE_BUTTON_GAP: f32 = 10.0;
 
     /// Where the blocks that do not depend on the rows sit, plus the window's height.
     pub struct Frame {
@@ -115,6 +119,19 @@ pub mod settings {
                 bottom: top + height,
             }
         })
+    }
+
+    /// The button's box, centred in the title bar and ending `TITLE_BUTTON_GAP` before the
+    /// version, which starts at `version_left`.
+    pub fn title_button_rect(version_left: f32, text_width: f32) -> Rect {
+        let right = version_left - TITLE_BUTTON_GAP;
+        let top = (TITLE_BAR_HEIGHT - TITLE_BUTTON_HEIGHT) / 2.0;
+        Rect {
+            left: right - text_width - 2.0 * TITLE_BUTTON_PADDING,
+            top,
+            right,
+            bottom: top + TITLE_BUTTON_HEIGHT,
+        }
     }
 
     pub fn card_height(row_count: usize) -> f32 {

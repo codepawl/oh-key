@@ -4,8 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+# Read-only by default: the build jobs run third-party actions. Only the publish jobs write.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,25 +26,54 @@ jobs:
           - target: aarch64-pc-windows-msvc
             arch: arm64
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
+      - name: Check that the tag matches the version in Cargo.toml
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          workspace_version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          if [ "${GITHUB_REF_NAME#v}" != "$workspace_version" ]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but Cargo.toml says $workspace_version. Bump the version in Cargo.toml, commit, then tag."
+            exit 1
+          fi
       - name: Test the pure crates and the app
         if: matrix.arch == 'x64'
         run: cargo test --workspace --release --locked
       - name: Build the app and the command line tool
         run: cargo build -p oh-key-app -p oh-key-cli --release --locked --target ${{ matrix.target }}
+      - name: Smoke test the x64 build
+        # --version must print "oh-key <tag without v>". crash-test must die on purpose: a non-zero
+        # exit proves the crash path runs. Its exit code is not pinned (the app lane owns it).
+        if: matrix.arch == 'x64'
+        shell: bash
+        run: |
+          exe="target/${{ matrix.target }}/release/oh-key.exe"
+          expected_version="${GITHUB_REF_NAME#v}"
+          version_output="$(timeout 30 "$exe" --version)"
+          echo "oh-key --version printed: $version_output"
+          if [ "$version_output" != "oh-key $expected_version" ]; then
+            echo "::error::--version printed '$version_output', expected 'oh-key $expected_version'"
+            exit 1
+          fi
+          set +e
+          timeout 60 "$exe" crash-test
+          crash_exit_code=$?
+          set -e
+          echo "oh-key crash-test exit code: $crash_exit_code"
+          if [ "$crash_exit_code" -eq 0 ] || [ "$crash_exit_code" -eq 124 ]; then
+            echo "::error::crash-test must exit non-zero without hanging (got $crash_exit_code)"
+            exit 1
+          fi
       - name: Collect the binaries
         shell: bash
         run: |
           release_dir="target/${{ matrix.target }}/release"
           mkdir build
           cp "$release_dir/oh-key.exe" "$release_dir/oh-key-cli.exe" build/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-${{ matrix.arch }}
           path: build
@@ -53,16 +83,13 @@ jobs:
     # The macOS input method, one universal zip.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: macos-app
       - name: Build oh-key.app
         run: bash macos/build.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: oh-key-macos-zip
           path: target/mac/oh-key-macos.zip
@@ -73,8 +100,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: builds
       - name: Assemble the zips
@@ -85,47 +112,106 @@ jobs:
             cp "builds/build-$arch/oh-key.exe" "builds/build-$arch/oh-key-cli.exe" "$package/"
             cp LICENSE README.md "$package/"
             (cd "$package" && zip -r "../$package.zip" .)
+            # The updater downloads the bare exe, not the zip.
+            cp "builds/build-$arch/oh-key.exe" "$package.exe"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: oh-key-windows-zips
-          path: oh-key-windows-*.zip
+          name: oh-key-windows-assets
+          path: |
+            oh-key-windows-*.zip
+            oh-key-windows-*.exe
           if-no-files-found: error
 
   publish:
+    # The private repository's own release, with notes generated from its pull requests.
     needs: package
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: oh-key-windows-zips
+          name: oh-key-windows-assets
           path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum *.zip | tee SHA256SUMS.txt
+          sha256sum oh-key-windows-* | tee SHA256SUMS.txt
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" dist/* \
+          gh release create "$TAG" dist/* \
             --repo "${{ github.repository }}" \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --generate-notes
 
   publish-macos:
     # Attached after the Windows release exists, so a failed macOS build never blocks it.
     needs: [publish, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: oh-key-macos-zip
           path: dist
-      - name: Upload the macOS zip and its checksum
+      - name: Add the macOS zip to SHA256SUMS.txt and upload
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern SHA256SUMS.txt --dir dist
           cd dist
-          sha256sum oh-key-macos.zip | tee oh-key-macos.sha256
-          gh release upload "${{ github.ref_name }}" oh-key-macos.zip oh-key-macos.sha256             --repo "${{ github.repository }}"
+          sha256sum oh-key-macos.zip | tee -a SHA256SUMS.txt
+          gh release upload "$TAG" oh-key-macos.zip SHA256SUMS.txt --clobber \
+            --repo "${{ github.repository }}"
+
+  publish-public:
+    # The public releases repo gets one complete release in one step: every file and one
+    # SHA256SUMS.txt, so the updater never sees a half-filled release or a missing list. A failed
+    # macOS build does not block the Windows files.
+    needs: [package, macos]
+    if: ${{ !cancelled() && needs.package.result == 'success' }}
+    runs-on: ubuntu-latest
+    # Keep RELEASES_TOKEN in this environment's secrets and give the environment required reviewers
+    # and a tag rule, so a branch with a changed workflow cannot read the token.
+    environment: public-release
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ github.ref_name }}
+      PUBLIC_REPO: codepawl/oh-key-releases
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: oh-key-windows-assets
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: oh-key-macos-zip
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum oh-key-windows-* $(ls oh-key-macos.zip 2>/dev/null) | tee SHA256SUMS.txt
+      - name: Create the public release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::RELEASES_TOKEN is not set, so $TAG was not published to $PUBLIC_REPO. Run tools/publish-release.ps1 to publish it."
+            exit 0
+          fi
+          # Written here, not copied from the private release: its notes name pull requests and people.
+          printf 'oh-key %s\n\nBuilt files and SHA256SUMS.txt. The app updates itself from this page.\n' "${TAG#v}" > release-notes.md
+          gh release create "$TAG" dist/* \
+            --repo "$PUBLIC_REPO" \
+            --title "$TAG" \
+            --notes-file release-notes.md

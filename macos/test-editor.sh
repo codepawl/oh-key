@@ -17,6 +17,12 @@ swiftc -O -swift-version 5 \
     -framework Cocoa \
     "$repository/macos/Sources/OhKeyEditor.swift" \
     "$repository/macos/Sources/Preferences.swift" \
+    "$repository/macos/Sources/AppLog.swift" \
+    "$repository/macos/Sources/ReportScrubber.swift" \
+    "$repository/macos/Sources/ReportPolicy.swift" \
+    "$repository/macos/Sources/CrashRecord.swift" \
+    "$repository/macos/Sources/UpdateCheck.swift" \
+    "$repository/macos/Tests/ReportingTests.swift" \
     "$repository/macos/Tests/MockTextClient.swift" \
     "$repository/macos/Tests/main.swift" \
     "$repository/target/mac-rust-host/release/liboh_key_ffi.a" \

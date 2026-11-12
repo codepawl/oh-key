@@ -12,8 +12,8 @@ mod settings;
 mod shared_state;
 
 pub use settings::{
-    Settings, ToggleHotkey, config_path, format_settings, load_settings, macros_path,
-    parse_settings, save_settings,
+    Settings, ToggleHotkey, UpdateMode, config_path, format_settings, load_settings, macros_path,
+    parse_settings, reports_allowed, reports_allowed_by, save_settings, settings_file_problem,
 };
 #[cfg(windows)]
 pub use shared_state::{SharedState, instance_suffix};
