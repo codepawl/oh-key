@@ -31,17 +31,18 @@ use windows::Win32::System::Threading::{
     QueryFullProcessImageNameW, SetProcessInformation, SetThreadPriority,
     THREAD_PRIORITY_TIME_CRITICAL,
 };
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, GetLastInputInfo, INPUT, INPUT_0,
-    INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
-    LASTINPUTINFO, SendInput, ToUnicodeEx, VIRTUAL_KEY,
+    GetAsyncKeyState, GetKeyState, GetKeyboardLayout, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT,
+    KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, ToUnicodeEx, VIRTUAL_KEY,
 };
+use windows::Win32::UI::Input::{RAWINPUTDEVICE, RIDEV_INPUTSINK, RegisterRawInputDevices};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GetForegroundWindow, GetMessageW,
-    GetWindowThreadProcessId, HHOOK, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW,
-    PostThreadMessageW, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
-    WINEVENT_OUTOFCONTEXT, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
+    CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
+    GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HHOOK, HWND_MESSAGE,
+    KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, RegisterClassExW,
+    SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WINDOW_EX_STYLE,
+    WINDOW_STYLE, WM_INPUT, WM_KEYDOWN, WM_KEYUP, WM_QUIT, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_USER,
+    WNDCLASSEXW,
 };
 use windows::core::{Owned, PWSTR, w};
 
@@ -1596,6 +1597,8 @@ const SLOW_CALLBACK_MICROSECONDS: u32 = 50_000;
 static SLOW_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 /// `GetTickCount` at the start of the last hook callback, to notice a hook that Windows removed.
 static LAST_CALLBACK_TICK: AtomicU32 = AtomicU32::new(0);
+/// Counts hook callbacks, so the watchdog can tell whether one arrived since its last reinstall.
+static CALLBACK_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 /// How many key callbacks ran longer than 50 ms so far.
 #[allow(dead_code)]
@@ -1603,21 +1606,42 @@ pub fn slow_callback_count() -> usize {
     SLOW_CALLBACKS.load(Ordering::Relaxed)
 }
 
-/// Input is newer than the last callback by this much: the hook is gone, or the keyboard is.
+/// A keyboard key is newer than the last callback by this much: the hook is gone.
 const SILENT_HOOK_MILLISECONDS: i32 = 1500;
 /// A reinstall is cheap but not free; never more often than this.
 const REINSTALL_PAUSE_MILLISECONDS: i32 = 10_000;
 
 /// Windows removes a low-level hook whose callback ran past its timeout, without telling the
-/// app. Input that produced no callback for a while means the hook is gone.
-pub fn hook_seems_removed(last_input_tick: u32, last_callback_tick: u32) -> bool {
-    last_input_tick.wrapping_sub(last_callback_tick) as i32 > SILENT_HOOK_MILLISECONDS
+/// app. A keyboard key that produced no callback for a while means the hook is gone. The key
+/// tick comes from raw keyboard input only: mouse input never reaches a keyboard hook, so
+/// counting it (as `GetLastInputInfo` does) took every mouse move for a removed hook.
+pub fn hook_seems_removed(last_key_tick: u32, last_callback_tick: u32) -> bool {
+    last_key_tick.wrapping_sub(last_callback_tick) as i32 > SILENT_HOOK_MILLISECONDS
 }
 
-pub fn reinstall_allowed(now_tick: u32, last_reinstall_tick: Option<u32>) -> bool {
-    match last_reinstall_tick {
+/// What the watchdog knows when a keyboard key arrives.
+#[derive(Clone, Copy, Debug)]
+pub struct WatchdogFacts {
+    pub key_tick: u32,
+    pub last_callback_tick: u32,
+    pub last_reinstall_tick: Option<u32>,
+    /// A callback ran after the last reinstall.
+    pub callback_since_reinstall: bool,
+}
+
+/// A reinstall that brought no callback back means the hook was blocked, not removed: an
+/// elevated window has the keyboard, and Windows keeps a normal app's hook out of it. Trying
+/// again would only repeat, so the watchdog waits for a callback before it may reinstall again.
+pub fn should_reinstall(facts: WatchdogFacts) -> bool {
+    if !hook_seems_removed(facts.key_tick, facts.last_callback_tick) {
+        return false;
+    }
+    match facts.last_reinstall_tick {
         None => true,
-        Some(last) => now_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS,
+        Some(last) => {
+            facts.callback_since_reinstall
+                && facts.key_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS
+        }
     }
 }
 
@@ -1626,6 +1650,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if code == HC_ACTION {
         let started = std::time::Instant::now();
         LAST_CALLBACK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
+        CALLBACK_SERIAL.fetch_add(1, Ordering::Relaxed);
         let event = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
         let mut swallowed = STATE.with(|cell| match cell.try_borrow_mut() {
             Ok(mut guard) => guard.as_mut().is_some_and(|state| {
@@ -1699,9 +1724,11 @@ pub fn start(
 }
 
 thread_local! {
-    /// The installed hook and the tick of the last reinstall; only the hook thread touches them.
+    /// The installed hook, the tick of the last reinstall and the callback count at that
+    /// moment; only the hook thread touches them.
     static INSTALLED_HOOK: Cell<Option<HHOOK>> = const { Cell::new(None) };
     static LAST_REINSTALL_TICK: Cell<Option<u32>> = const { Cell::new(None) };
+    static SERIAL_AT_REINSTALL: Cell<u32> = const { Cell::new(0) };
 }
 
 fn run_hook_thread(
@@ -1718,8 +1745,8 @@ fn run_hook_thread(
     };
     INSTALLED_HOOK.with(|cell| cell.set(Some(hook)));
     LAST_CALLBACK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
-    // Event driven, so an idle app still has no timer: a window switch is the moment to check.
-    let foreground_watch = watch_foreground_changes();
+    // Event driven, so an idle app still has no timer: each keyboard key is the moment to check.
+    let key_watch = watch_keyboard_keys();
     let mut message = MSG::default();
     // Creates this thread's message queue, so a quit posted right away is not lost.
     let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
@@ -1730,8 +1757,8 @@ fn run_hook_thread(
             DispatchMessageW(&message);
         }
     }
-    if let Some(watch) = foreground_watch {
-        let _ = unsafe { UnhookWinEvent(watch) };
+    if let Some(window) = key_watch {
+        let _ = unsafe { DestroyWindow(window) };
     }
     if let Some(current) = INSTALLED_HOOK.with(Cell::take) {
         let _ = unsafe { UnhookWindowsHookEx(current) };
@@ -1757,63 +1784,86 @@ fn prefer_responsiveness() {
     }
 }
 
-fn watch_foreground_changes() -> Option<HWINEVENTHOOK> {
-    let watch = unsafe {
-        SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
+/// A message-only window that receives raw keyboard input in the background. Only the time of
+/// each key is used, never which key it was. The hook callback for a key runs on this thread
+/// before the key's raw input does, so a live hook has always stamped its tick first.
+fn watch_keyboard_keys() -> Option<HWND> {
+    let instance = unsafe { GetModuleHandleW(None) }.ok()?;
+    let class_name = w!("oh-key-hook-watch");
+    let class = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        lpfnWndProc: Some(key_watch_proc),
+        hInstance: instance.into(),
+        lpszClassName: class_name,
+        ..Default::default()
+    };
+    // Registering twice fails harmlessly; the class from the first call stays.
+    unsafe { RegisterClassExW(&class) };
+    let window = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE(0),
+            class_name,
+            w!(""),
+            WINDOW_STYLE(0),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
             None,
-            Some(foreground_changed),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT,
+            Some(instance.into()),
+            None,
         )
-    };
-    (!watch.is_invalid()).then_some(watch)
-}
-
-unsafe extern "system" fn foreground_changed(
-    _watch: HWINEVENTHOOK,
-    _event: u32,
-    _window: HWND,
-    _object: i32,
-    _child: i32,
-    _thread: u32,
-    _time: u32,
-) {
-    reinstall_hook_if_removed();
-}
-
-fn last_input_tick() -> Option<u32> {
-    let mut info = LASTINPUTINFO {
-        cbSize: size_of::<LASTINPUTINFO>() as u32,
-        dwTime: 0,
-    };
-    unsafe { GetLastInputInfo(&mut info) }
-        .as_bool()
-        .then_some(info.dwTime)
-}
-
-fn reinstall_hook_if_removed() {
-    let Some(input_tick) = last_input_tick() else {
-        return;
-    };
-    if !hook_seems_removed(input_tick, LAST_CALLBACK_TICK.load(Ordering::Relaxed)) {
-        return;
     }
-    let now = unsafe { GetTickCount() };
-    if !reinstall_allowed(now, LAST_REINSTALL_TICK.with(Cell::get)) {
+    .ok()?;
+    // Generic desktop page, keyboard usage.
+    let keyboard = RAWINPUTDEVICE {
+        usUsagePage: 0x01,
+        usUsage: 0x06,
+        dwFlags: RIDEV_INPUTSINK,
+        hwndTarget: window,
+    };
+    let registered =
+        unsafe { RegisterRawInputDevices(&[keyboard], size_of::<RAWINPUTDEVICE>() as u32) };
+    if registered.is_err() {
+        let _ = unsafe { DestroyWindow(window) };
+        return None;
+    }
+    Some(window)
+}
+
+unsafe extern "system" fn key_watch_proc(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_INPUT {
+        reinstall_hook_if_removed(unsafe { GetTickCount() });
+    }
+    // DefWindowProc frees the raw input buffer.
+    unsafe { DefWindowProcW(window, message, wparam, lparam) }
+}
+
+fn reinstall_hook_if_removed(key_tick: u32) {
+    let serial_now = CALLBACK_SERIAL.load(Ordering::Relaxed);
+    let facts = WatchdogFacts {
+        key_tick,
+        last_callback_tick: LAST_CALLBACK_TICK.load(Ordering::Relaxed),
+        last_reinstall_tick: LAST_REINSTALL_TICK.with(Cell::get),
+        callback_since_reinstall: SERIAL_AT_REINSTALL.with(Cell::get) != serial_now,
+    };
+    if !should_reinstall(facts) {
         return;
     }
     if let Some(old) = INSTALLED_HOOK.with(Cell::take) {
         let _ = unsafe { UnhookWindowsHookEx(old) };
     }
-    LAST_CALLBACK_TICK.store(now, Ordering::Relaxed);
     let installed = install_hook();
-    // Only a successful install starts the pause, so a failed one is tried again at the next
-    // window switch.
+    // Only a successful install starts the pause, so a failed one is tried again at the next key.
     if installed.is_some() {
-        LAST_REINSTALL_TICK.with(|cell| cell.set(Some(now)));
+        LAST_REINSTALL_TICK.with(|cell| cell.set(Some(key_tick)));
+        SERIAL_AT_REINSTALL.with(|cell| cell.set(serial_now));
         pass_on_diagnostic(HookDiagnostic::Reinstalled);
     }
     INSTALLED_HOOK.with(|cell| cell.set(installed));

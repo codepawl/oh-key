@@ -1064,11 +1064,36 @@ fn a_removed_hook_is_noticed_from_input_that_made_no_callback() {
     assert!(hook_seems_removed(3_000, u32::MAX - 100));
 }
 
+fn facts(key_tick: u32, last_reinstall_tick: Option<u32>, callback_since: bool) -> WatchdogFacts {
+    WatchdogFacts {
+        key_tick,
+        last_callback_tick: 0,
+        last_reinstall_tick,
+        callback_since_reinstall: callback_since,
+    }
+}
+
+#[test]
+fn a_live_hook_is_never_reinstalled() {
+    let live = WatchdogFacts {
+        last_callback_tick: 50_000,
+        ..facts(50_000, None, true)
+    };
+    assert!(!should_reinstall(live));
+}
+
 #[test]
 fn reinstalling_is_rate_limited() {
-    assert!(reinstall_allowed(1_000, None));
-    assert!(!reinstall_allowed(5_000, Some(1_000)));
-    assert!(reinstall_allowed(11_000, Some(1_000)));
+    assert!(should_reinstall(facts(2_000, None, false)));
+    assert!(!should_reinstall(facts(5_000, Some(1_000), true)));
+    assert!(should_reinstall(facts(11_000, Some(1_000), true)));
+}
+
+#[test]
+fn a_reinstall_that_brought_no_callback_back_is_not_repeated() {
+    // An elevated window keeps the hook out: reinstalling again would only loop.
+    assert!(!should_reinstall(facts(60_000, Some(1_000), false)));
+    assert!(!should_reinstall(facts(600_000, Some(1_000), false)));
 }
 
 #[test]

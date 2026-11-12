@@ -664,8 +664,10 @@ fn send(event: &ReportEvent, identity: &Identity) {
                 "report failed: the server answered {}",
                 response.status
             ));
-            limiter.refund(&signature);
-            save_state(&state_path, &limiter);
+            if worth_retrying(response.status) {
+                limiter.refund(&signature);
+                save_state(&state_path, &limiter);
+            }
         }
         Err(error) => {
             app_log::write(&format!("report failed: {error}"));
@@ -673,6 +675,13 @@ fn send(event: &ReportEvent, identity: &Identity) {
             save_state(&state_path, &limiter);
         }
     }
+}
+
+/// Only a server fault gives the report back to the day's budget. A 4xx answer (a refused body,
+/// or 429 when the server is full) would refuse the same report again, so retrying it on every
+/// later event only adds load.
+pub fn worth_retrying(status: u32) -> bool {
+    status >= 500
 }
 
 fn save_state(path: &PathBuf, limiter: &RateLimiter) {
@@ -685,8 +694,20 @@ pub fn connect_hook() {
     crate::hook::set_diagnostic_handler(forward_hook_diagnostic);
 }
 
+/// One reinstall report per run tells the story; the rest of a run's reinstalls are the same
+/// problem and stay in the log only.
+static HOOK_REINSTALL_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 fn forward_hook_diagnostic(diagnostic: crate::hook::HookDiagnostic) {
     use crate::hook::HookDiagnostic;
+    use std::sync::atomic::Ordering;
+    if matches!(diagnostic, HookDiagnostic::Reinstalled)
+        && HOOK_REINSTALL_REPORTED.swap(true, Ordering::Relaxed)
+    {
+        app_log::write("hook reinstalled again; not reported");
+        return;
+    }
     let event = match diagnostic {
         HookDiagnostic::Reinstalled => ReportEvent::new(
             EventKind::HookReinstalled,
@@ -720,6 +741,15 @@ mod tests {
             user_name: Some("Someone".to_string()),
             computer_name: Some("DESKTOP-ABC123".to_string()),
         }
+    }
+
+    #[test]
+    fn only_a_server_fault_is_retried() {
+        assert!(worth_retrying(500));
+        assert!(worth_retrying(503));
+        assert!(!worth_retrying(429));
+        assert!(!worth_retrying(400));
+        assert!(!worth_retrying(413));
     }
 
     #[test]
