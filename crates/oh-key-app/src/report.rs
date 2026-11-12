@@ -18,7 +18,7 @@ use crate::{app_log, http};
 
 /// The one place that names the Worker. The placeholder is replaced after deploying it; while
 /// it is a placeholder nothing is sent.
-const REPORT_ENDPOINT: &str = "https://oh-key-report.nxan2911.workers.dev/v1/report";
+const REPORT_ENDPOINT: &str = "https://oh-key-report.codepawl.com/v1/report";
 
 pub const MAX_REPORTS_PER_DAY: u32 = 5;
 /// Noisy kinds may use only this many of the day's reports, so a flood of them can never

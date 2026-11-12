@@ -3,6 +3,12 @@ main = "src/index.ts"
 compatibility_date = "2026-08-01"
 compatibility_flags = ["nodejs_compat"]
 
+routes = [
+  { pattern = "oh-key-report.codepawl.com", custom_domain = true },
+]
+# Keep workers.dev off: its address carries the account name.
+workers_dev = false
+
 [observability]
 enabled = true
 head_sampling_rate = 1

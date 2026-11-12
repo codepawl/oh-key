@@ -2,7 +2,7 @@ import Foundation
 
 /// The only place the report endpoint is written down. The placeholder is replaced after the
 /// Cloudflare Worker is deployed.
-let REPORT_ENDPOINT = "https://oh-key-report.nxan2911.workers.dev/v1/report"
+let REPORT_ENDPOINT = "https://oh-key-report.codepawl.com/v1/report"
 
 /// Sends error and crash reports. Everything in a report is built by ReportPayload from our own
 /// messages; nothing here reads typed text, the clipboard or window titles.
