@@ -233,7 +233,7 @@ fn try_open(owner: Option<HWND>) -> Result<()> {
     let built = build_window(graphics, &frame);
     match built {
         Ok(window) => {
-            unsafe { SetWindowLongPtrW(frame.hwnd, GWLP_USERDATA, Box::into_raw(window) as isize) };
+            unsafe { SetWindowLongPtrW(frame.hwnd, GWLP_USERDATA, Box::into_raw(window) as _) };
             OPEN_WINDOW.set(frame.hwnd);
             tool_window::show(frame.hwnd);
             Ok(())

@@ -110,7 +110,7 @@ pub fn run(shared: SharedState) -> Result<()> {
             None,
         )?
     };
-    unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, tray_pointer as isize) };
+    unsafe { SetWindowLongPtrW(hwnd, GWLP_USERDATA, tray_pointer as _) };
     let tray = unsafe { &mut *tray_pointer };
     tray.shown_mode_counter = tray.shared.mode_counter();
     tray.add_icon(hwnd);
@@ -184,18 +184,24 @@ unsafe extern "system" fn window_proc(
 impl Tray {
     fn notify_data(&self, hwnd: HWND) -> NOTIFYICONDATAW {
         let vietnamese = self.shared.vietnamese();
-        let mut data = NOTIFYICONDATAW {
+        // The struct is packed on x86, so the tip is filled in a local buffer and moved in whole.
+        let mut tip_buffer = [0u16; 128];
+        for (slot, unit) in tip_buffer
+            .iter_mut()
+            .zip(tooltip(vietnamese).encode_utf16())
+        {
+            *slot = unit;
+        }
+        NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: 1,
             uFlags: NIF_ICON | NIF_MESSAGE | NIF_TIP,
             uCallbackMessage: MESSAGE_TRAY,
             hIcon: mode_icon::icon(vietnamese),
+            szTip: tip_buffer,
             ..Default::default()
-        };
-        let tip: Vec<u16> = tooltip(vietnamese).encode_utf16().collect();
-        data.szTip[..tip.len()].copy_from_slice(&tip);
-        data
+        }
     }
 
     fn add_icon(&self, hwnd: HWND) {

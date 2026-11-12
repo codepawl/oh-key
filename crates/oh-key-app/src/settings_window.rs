@@ -203,7 +203,7 @@ pub fn open() -> Result<()> {
         popup: None,
     });
     unsafe {
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(window) as isize);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(window) as _);
         OPEN_WINDOW.store(hwnd.0 as isize, Ordering::Relaxed);
         let _ = ShowWindow(hwnd, SW_SHOWNORMAL);
         let _ = SetForegroundWindow(hwnd);

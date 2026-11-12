@@ -4,6 +4,8 @@
 //! named memory block that carries the settings and the Vietnamese/English
 //! mode between the tray, the keyboard hook and a second launch of the app.
 
+// Only the Windows `SharedState` maps the block; elsewhere it is built for its tests.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod block;
 mod settings;
 #[cfg(windows)]
