@@ -1606,6 +1606,8 @@ const WM_CHECK_HOOK: u32 = WM_APP + 1;
 const SILENT_HOOK_MILLISECONDS: i32 = 1000;
 /// A reinstall is cheap but not free; never more often than this.
 const REINSTALL_PAUSE_MILLISECONDS: i32 = 10_000;
+/// After a reinstall that brought no callback back, the next try waits this long instead.
+const BLOCKED_RETRY_MILLISECONDS: i32 = 60_000;
 
 /// How many key callbacks ran longer than 50 ms so far.
 #[allow(dead_code)]
@@ -1656,20 +1658,23 @@ pub fn watch_silence(watch: SilenceWatch, serial_now: u32, now_tick: u32) -> (Si
     }
 }
 
-/// A reinstall that brought no callback back means the main hook is blocked, not removed, so
-/// trying again would only repeat; the watchdog waits for a callback first.
+/// A reinstall that brought no callback back usually means the main hook is blocked, not
+/// removed, so trying again soon would only repeat. It may also have been removed again before
+/// its first key, so the watchdog still tries, only rarely.
 pub fn reinstall_allowed(
     now_tick: u32,
     last_reinstall_tick: Option<u32>,
     callback_since_reinstall: bool,
 ) -> bool {
-    match last_reinstall_tick {
-        None => true,
-        Some(last) => {
-            callback_since_reinstall
-                && now_tick.wrapping_sub(last) as i32 >= REINSTALL_PAUSE_MILLISECONDS
-        }
-    }
+    let Some(last) = last_reinstall_tick else {
+        return true;
+    };
+    let pause = if callback_since_reinstall {
+        REINSTALL_PAUSE_MILLISECONDS
+    } else {
+        BLOCKED_RETRY_MILLISECONDS
+    };
+    now_tick.wrapping_sub(last) as i32 >= pause
 }
 
 unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1770,17 +1775,20 @@ fn run_hook_thread(
 ) {
     STATE.with(|cell| *cell.borrow_mut() = Some(HookState::new(provider, toggle_action, options)));
     prefer_responsiveness();
+    let mut message = MSG::default();
+    // Creates this thread's message queue, so a quit or a sentinel check posted right away is
+    // not lost.
+    let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
+    HOOK_THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::Relaxed);
+    // Installed before the main hook, so Windows calls the main hook first and the sentinel
+    // last: the sentinel's call never contains the main hook's work.
+    let sentinel = start_sentinel();
     let Some(hook) = install_hook() else {
+        stop_sentinel(sentinel);
         let _ = ready.send(None);
         return;
     };
     INSTALLED_HOOK.with(|cell| cell.set(Some(hook)));
-    let mut message = MSG::default();
-    // Creates this thread's message queue, so a quit posted right away is not lost.
-    let _ = unsafe { PeekMessageW(&mut message, None, WM_USER, WM_USER, PM_NOREMOVE) };
-    HOOK_THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::Relaxed);
-    // Installed after the main hook, so Windows calls it first, ahead of any swallowing.
-    let sentinel = start_sentinel();
     let _ = ready.send(Some(unsafe { GetCurrentThreadId() }));
     while unsafe { GetMessageW(&mut message, None, 0, 0) }.0 > 0 {
         if message.hwnd.is_invalid() && message.message == WM_CHECK_HOOK {
@@ -1792,10 +1800,7 @@ fn run_hook_thread(
             DispatchMessageW(&message);
         }
     }
-    if let Some((sentinel_thread_id, sentinel_thread)) = sentinel {
-        let _ = unsafe { PostThreadMessageW(sentinel_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
-        let _ = sentinel_thread.join();
-    }
+    stop_sentinel(sentinel);
     if let Some(current) = INSTALLED_HOOK.with(Cell::take) {
         let _ = unsafe { UnhookWindowsHookEx(current) };
     }
@@ -1821,8 +1826,10 @@ fn prefer_responsiveness() {
 }
 
 /// The sentinel: a second low-level hook on its own thread that only notes each key and tells
-/// the hook thread. It does no work, so Windows never drops it for running late, and unlike
-/// `GetLastInputInfo` it sees keys only, never the mouse. It never reads which key it was.
+/// the hook thread. It sits behind the main hook in the chain and does no work, so Windows has
+/// no reason to drop it, and unlike `GetLastInputInfo` it sees keys only, never the mouse. It
+/// never reads which key it was. Keys the main hook swallows never reach it; a dead main hook
+/// swallows nothing, so then it sees every key.
 fn start_sentinel() -> Option<(u32, JoinHandle<()>)> {
     let (sender, receiver) = mpsc::channel();
     let thread = std::thread::Builder::new()
@@ -1838,7 +1845,15 @@ fn start_sentinel() -> Option<(u32, JoinHandle<()>)> {
     }
 }
 
+fn stop_sentinel(sentinel: Option<(u32, JoinHandle<()>)>) {
+    if let Some((sentinel_thread_id, sentinel_thread)) = sentinel {
+        let _ = unsafe { PostThreadMessageW(sentinel_thread_id, WM_QUIT, WPARAM(0), LPARAM(0)) };
+        let _ = sentinel_thread.join();
+    }
+}
+
 fn run_sentinel_thread(ready: mpsc::Sender<Option<u32>>) {
+    prefer_responsiveness();
     let Some(module) = unsafe { GetModuleHandleW(None) }.ok() else {
         let _ = ready.send(None);
         return;

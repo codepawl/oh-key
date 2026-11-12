@@ -1083,9 +1083,10 @@ fn reinstalling_is_rate_limited() {
 }
 
 #[test]
-fn a_reinstall_that_brought_no_callback_back_is_not_repeated() {
-    // The hook is blocked, not removed: reinstalling again would only loop.
-    assert!(!reinstall_allowed(60_000, Some(1_000), false));
+fn a_reinstall_that_brought_no_callback_back_is_retried_only_rarely() {
+    // Most likely blocked, not removed: reinstalling every few seconds would only loop.
+    assert!(!reinstall_allowed(30_000, Some(1_000), false));
+    assert!(reinstall_allowed(61_000, Some(1_000), false));
 }
 
 #[test]
