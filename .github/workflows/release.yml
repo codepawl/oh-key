@@ -49,6 +49,25 @@ jobs:
           path: build
           if-no-files-found: error
 
+  macos:
+    # The macOS input method, one universal zip.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app
+      - name: Build oh-key.app
+        run: bash macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oh-key-macos-zip
+          path: target/mac/oh-key-macos.zip
+          if-no-files-found: error
+
   package:
     # One zip per architecture, with oh-key.exe and oh-key-cli.exe at the top.
     needs: build
@@ -93,3 +112,20 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${{ github.ref_name }}" \
             --generate-notes
+
+  publish-macos:
+    # Attached after the Windows release exists, so a failed macOS build never blocks it.
+    needs: [publish, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: oh-key-macos-zip
+          path: dist
+      - name: Upload the macOS zip and its checksum
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum oh-key-macos.zip | tee oh-key-macos.sha256
+          gh release upload "${{ github.ref_name }}" oh-key-macos.zip oh-key-macos.sha256             --repo "${{ github.repository }}"

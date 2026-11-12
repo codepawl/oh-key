@@ -1,45 +1,24 @@
 # oh-key
 
-A Vietnamese typing app for Windows written in Rust, in the Unikey style: fast, small and with fewer bugs.
+A Vietnamese typing app written in Rust, in the Unikey style: fast, small and with fewer bugs. It runs on Windows as a tray app and on macOS as an input method.
 
 Bộ gõ tiếng Việt viết bằng Rust: nhanh, nhẹ, ít lỗi hơn Unikey.
 
-![The oh-key control panel](docs/settings.png)
+![Typing a mixed Vietnamese and English sentence in Telex](docs/media/typing.gif)
 
-## How it works
+Every frame shows the real engine output for the keys typed so far. Note that `deadline`, `project`, `check` and `email` stay English while `Hôm` and `nhé` get their marks. The [MP4 version](docs/media/typing.mp4) is sharper. The script that draws it is in `tools/demo`.
 
-oh-key is a tray app that types Vietnamese in every Windows app, like Unikey. To do that it installs a low-level keyboard hook (`WH_KEYBOARD_LL`): it sees each key before the application does, runs it through the typing engine and, when the word changes, sends the change back with `SendInput`. It reads the keys you type in every app, so it is a program you have to trust; it never stores, logs or sends them anywhere, and the code is here to check.
-
-This is the same basic method as Unikey, and it has the same limits: an app that handles fast backspaces badly can still show a wrong letter, a window that runs as administrator is out of reach (oh-key leaves it alone), and a few games with anti-cheat refuse hooks. Put such programs on the "Ứng dụng tắt oh-key" list in the control panel.
-
-What oh-key does to cut Unikey's backspace bugs:
-
-- **Only the changed tail is rewritten.** Letters that need no change go through untouched, and a tone or a hat key sends the fewest backspaces plus the new tail, not the whole word.
-- **One batch per key.** The backspaces and the new characters leave in a single `SendInput` call, so a key you type next cannot land in the middle of the edit. Unikey's doubled and lost letters come from that gap.
-- **Unicode events, not key codes.** The new text is sent as Unicode characters, so it does not depend on the target app's keyboard layout.
-- **Its own output is never read back.** Every key oh-key sends carries a marker, and the hook skips it.
-- **Spell check and restore.** If the keys do not make a Vietnamese word (for example `window` or `github`), oh-key gives back the exact keys you typed.
-- **Speed.** The engine avoids allocation on the typing path and has a benchmark (`crates/oh-key-engine/examples/bench.rs`).
-- **Ported from Unikey where it was right.** Charsets (Unicode, TCVN3, VNI, VIQR and others), macros and typing rules follow Unikey's behaviour, with tests for each.
-
-## The app
-
-`oh-key.exe` sits in the tray and shows the mode, V for Vietnamese and E for English. A left click switches the mode, a right click opens the menu. The control panel changes the input method (Telex, VNI, VIQR, simple Telex), tone placement, spell check, restore, the switch hotkey (Ctrl+Shift or Alt+Z), macros and start with Windows. The hotkey works in every app, also in English mode.
-
-- **Macros** (gõ tắt): an editor for abbreviations in Unikey's macro file format, with import and export.
-- **Charset converter** (chuyển mã): converts the clipboard between Unicode, TCVN3, VNI, VIQR and the other charsets.
-- **Apps where oh-key is off** (ứng dụng tắt oh-key): programs you list keep their keys untouched.
-
-![Macros](docs/macros.png)
-![Charset converter](docs/converter.png)
+![The oh-key control panel](docs/media/settings.png)
 
 ## Status
 
-Early. The engine, charset conversion and the app are in place; do not rely on it for daily typing yet.
+Early. The engine, charset conversion and the Windows app are in place. The macOS input method builds and passes its bundle checks, but it has not been tried in real apps yet. Do not rely on either for daily typing.
 
-## Install (Windows)
+## Install
 
-While the repository is private, install needs the [GitHub CLI](https://cli.github.com) signed in:
+### Windows
+
+While the repository is private, the install needs the [GitHub CLI](https://cli.github.com) signed in.
 
 ```powershell
 gh auth login
@@ -47,9 +26,119 @@ gh repo clone codepawl/oh-key
 .\oh-key\install.ps1
 ```
 
-`install.ps1` downloads the latest release for your processor (x64, x86 or arm64), checks its SHA-256, copies `oh-key.exe` and `oh-key-cli.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. Add `-StartAtSignIn` to start the app every time you sign in.
+`install.ps1` downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` and `oh-key-cli.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. Add `-StartAtSignIn` to start the app at every sign-in.
 
-`oh-key-cli type <keys>` shows what the engine makes of a key sequence.
+You can also download `oh-key-windows-<arch>.zip` from the latest release and unzip it anywhere.
+
+### macOS
+
+The build is signed ad hoc and not notarized.
+
+1. Download `oh-key-macos.zip` from the latest release, or run `macos/build.sh`.
+2. Unzip it and copy `oh-key.app` to `~/Library/Input Methods`.
+3. Run `xattr -dr com.apple.quarantine "$HOME/Library/Input Methods/oh-key.app"`. Gatekeeper blocks a browser download without this step. A local build has no quarantine flag.
+4. Log out and in.
+5. Open System Settings > Keyboard > Input Sources and add oh-key under Vietnamese.
+
+Settings live in `~/Library/Application Support/oh-key/config.toml`, the same format as on Windows. The mode switches with Ctrl+Shift or Option+Z.
+
+## Numbers
+
+Speed and correctness come from one machine: Intel i7-14700KF, 64 GB DDR4-3600, Windows 11, release builds. The machine was busy during the runs, so each speed figure is the median of 5 runs, with the range in brackets. Full tables, commands and the list of wrong words are in [docs/benchmarks.md](docs/benchmarks.md).
+
+| What | oh-key | UniKey | Source |
+| --- | --- | --- | --- |
+| Median ns per key, 300,035-key Vietnamese Telex corpus | 44.59 (43.77 to 74.70) | 35.82 (35.27 to 43.62) | `bench/unikey-compare/run.ps1` |
+| Median ns per key, 303,588-key mixed English and Vietnamese corpus | 34.80 (34.33 to 36.00) | 33.77 (33.45 to 35.23) | `bench/unikey-compare/run-mixed.ps1` |
+| Wrong words in 51,140 words of Vietnamese prose | 0 | 179 | `bench/unikey-compare/run.ps1` |
+| Program size | 834,560 bytes | not measured | `tools/measure-footprint.ps1` |
+
+Both ran on 2026-11-12. oh-key takes 24% more time per key on the Vietnamese corpus (1.24x) and 3% more on the mixed corpus (1.03x). Both are far below one microsecond per key, so neither is noticeable while typing. The probable cause is that oh-key returns a `String` per committed word. This is inferred and has not been profiled. The engine had a 2-3x speed-up in commit `85e49ea`.
+
+The 179 UniKey errors are English words with a doubled key: `pass` becomes `pas`, `boss` becomes `bos` and `coffee` becomes `cofee`.
+
+### Footprint and latency
+
+Measured on the Windows release build. The sources, dates and scripts are in [docs/benchmarks.md](docs/benchmarks.md#footprint).
+
+| What | Value | Source |
+| --- | --- | --- |
+| Installed copy, hook on, 2026-11-12: working set | 7.31 MB | `tools/measure-footprint.ps1` |
+| Same: private bytes, threads, handles | 3.32 MB, 2, 205 | `tools/measure-footprint.ps1` |
+| Same: CPU time over 30 seconds (includes the keys typed meanwhile) | 93.8 ms | `tools/measure-footprint.ps1` |
+| Trim work, hook off: idle working set, before to after | 21.7 MB to 3.6 MB | `tools/measure-trim.ps1` |
+| Trim work: context switches per 60 seconds idle, before to after | 876 to 0 | `tools/measure-trim.ps1` |
+| Trim work: working set with the settings window closed again, before to after | 49.9 MB to 6.6 MB | `tools/measure-trim.ps1` |
+| Time in the hook callback, p50 / p99 / max (CI run 43195361798, 2,938 keys, includes `SendInput`) | 0 to 1 us / 170 to 201 us / 466 us | `hook_suite` |
+
+The hook latency is from a hosted CI runner, not from this machine.
+
+### English words typed with Telex on
+
+This is the case that matters when you write English inside Vietnamese. The test types 303,588 keys over seven token categories. A token is wrong when the output differs from the English word that was typed. Both engines read some English words as valid Vietnamese (`best` becomes `bét`, `see` becomes `sê`), and nothing can tell them apart without a dictionary.
+
+| Category | oh-key wrong | UniKey wrong | oh-key distinct | UniKey distinct |
+| --- | ---: | ---: | ---: | ---: |
+| English words that collide with Telex keys | 1508 | 2480 | 29 | 92 |
+| English words that are also Telex Vietnamese | 1976 | 2072 | 38 | 44 |
+| Brands and proper nouns | 104 | 447 | 2 | 27 |
+| Code and tech tokens | 364 | 467 | 7 | 16 |
+| Mixed Vietnamese and English sentences | 208 | 728 | 4 | 13 |
+| All caps and capitalised English | 260 | 878 | 5 | 35 |
+| English followed by punctuation | 728 | 1114 | 14 | 24 |
+
+"Distinct" counts each typed token once. oh-key is wrong on fewer distinct tokens in every category. One token is wrong in oh-key and right in UniKey: `#ff00aa` becomes `#ff00â`. The open items are listed in the benchmark report.
+
+### Tests
+
+- The workspace has 218 tests. All pass.
+- The hook suite has 34 cases. It replays headless inside `cargo test` and runs for real on Windows in CI (`hook-e2e`).
+- An adversarial engine test builds 13,833 syllables and types them in Telex, VNI and several key orders.
+- Engine changes need a typing test: keys in, text out.
+- The mixed English and Vietnamese corpus has its own tests in `crates/oh-key-engine/tests/english_mixed.rs`.
+
+## Features
+
+- **Input methods:** Telex, VNI, VIQR and simple Telex.
+- **Tone style:** classic (`hòa`) or modern (`hoà`) placement.
+- **Spell check and restore:** if the keys make no Vietnamese word, oh-key gives back the exact keys you typed. Examples are `window` and `github`. A word list covers English words with doubled keys.
+- **Macros** (gõ tắt, Windows only): an editor for abbreviations in Unikey's macro file format, with import and export.
+- **Charset converter** (chuyển mã, Windows only): converts the clipboard between Unicode, TCVN3, VNI, VIQR and other charsets.
+- **Excluded apps** (ứng dụng tắt oh-key): programs on the list keep their keys untouched.
+- **Hotkeys:** Ctrl+Shift or Alt+Z switches V and E on Windows. They work in every app, also in English mode.
+- **Tray icon and settings window (Windows only):** the icon shows V or E. A left click switches the mode and a right click opens the menu.
+- **macOS:** the same engine, `macros.txt`, the excluded apps list, the hotkeys (Ctrl+Shift or Option+Z) and an input source menu. The macOS build has been built and bundle-checked on a Mac, but not tried in real apps. CI builds it.
+
+![Macros](docs/macros.png)
+![Charset converter](docs/converter.png)
+![The input method dropdown](docs/media/settings-dropdown.png)
+![Apps where oh-key is off](docs/media/excluded-apps.png)
+
+## How it works
+
+On Windows, oh-key installs a low-level keyboard hook (`WH_KEYBOARD_LL`). It sees each key before the application, runs it through the typing engine and sends the change back with `SendInput`. The hook reads every key you type, so you have to trust the program. oh-key never stores, logs or sends the keys, and the code is here to check.
+
+The method is the same as Unikey's, with the same limits. An app that handles fast backspaces badly can still show a wrong letter. A window that runs as administrator is out of reach, and oh-key leaves it alone. A few games with anti-cheat refuse hooks. Put such programs on the excluded apps list.
+
+What oh-key does to cut Unikey's backspace bugs:
+
+- **Only the changed tail is rewritten.** A tone or a hat key sends the fewest backspaces. It adds the new tail and does not retype the whole word.
+- **One batch per key.** The backspaces and the new characters leave in one `SendInput` call. The next key cannot land in the middle of the edit.
+- **Unicode events, not key codes.** The result does not depend on the keyboard layout of the target app.
+- **Its own output is never read back.** Every key oh-key sends carries a marker, and the hook skips it.
+- **No allocation per key.** The engine allocates one `String` per committed word. `crates/oh-key-engine/examples/bench.rs` is the benchmark.
+
+On macOS, an InputMethodKit controller written in Swift (`macos/`) calls the same engine through a C API in `crates/oh-key-ffi`. It replaces the changed tail of the word with `insertText`. If a field gives no cursor position, it falls back to marked text.
+
+| Crate | Purpose |
+| --- | --- |
+| `oh-key-engine` | Telex, VNI and VIQR engine, spell check, restore |
+| `oh-key-charset` | Charset conversion |
+| `oh-key-macro` | Macro expansion |
+| `oh-key-ipc` | Settings format and shared state |
+| `oh-key-app` | Windows tray app and keyboard hook |
+| `oh-key-ffi` | C API for the macOS frontend |
+| `oh-key-cli` | `oh-key-cli type <keys>` shows what the engine makes of a key sequence |
 
 ## Build
 
@@ -60,12 +149,23 @@ cargo build --release --target x86_64-pc-windows-msvc
 cargo test --workspace --target x86_64-pc-windows-msvc
 ```
 
+On a Mac, `macos/build.sh` builds the universal app and zips it. `macos/verify.sh` checks the bundle.
+
+Before a pull request, run these checks:
+
+```powershell
+cargo fmt --check
+cargo check-all
+cargo test-all
+```
+
+To redraw the demo, run `bash ~/.agents/tools/gpu-lock.sh uv run --no-project python tools/demo/make_demo.py`. It needs Chrome and ffmpeg.
+
 ## Roadmap
 
-- macOS frontend with InputMethodKit (IMK).
+- Try the macOS input method in real apps.
 - Linux frontends for fcitx5 and ibus.
-
 
 ## Licence
 
-GPL-3.0-or-later. See [LICENSE](LICENSE). Parts follow the behaviour of Unikey, which is GPL as well.
+GPL-3.0-or-later. See [LICENSE](LICENSE). Parts follow the behaviour of Unikey, which is GPL as well. The credit to its author is in [NOTICE](NOTICE).

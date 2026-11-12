@@ -298,24 +298,24 @@ const VOWEL_FAMILIES: [VowelFamily; 12] = [
 
 const TONE_KEYS: [Option<char>; 6] = [None, Some('s'), Some('f'), Some('r'), Some('x'), Some('j')];
 
-struct RandomSource {
-    state: u64,
+pub struct RandomSource {
+    pub state: u64,
 }
 
 impl RandomSource {
-    fn next_u64(&mut self) -> u64 {
+    pub fn next_u64(&mut self) -> u64 {
         self.state ^= self.state >> 12;
         self.state ^= self.state << 25;
         self.state ^= self.state >> 27;
         self.state.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
-    fn below(&mut self, limit: usize) -> usize {
+    pub fn below(&mut self, limit: usize) -> usize {
         (self.next_u64() % limit as u64) as usize
     }
 
     /// True about `percent` times in a hundred.
-    fn chance(&mut self, percent: usize) -> bool {
+    pub fn chance(&mut self, percent: usize) -> bool {
         self.below(100) < percent
     }
 }
@@ -373,13 +373,13 @@ fn type_letter(letter: char, upper_case_all_keys: bool) -> TypedLetter {
 }
 
 /// How one word is typed.
-struct TypingStyle {
+pub struct TypingStyle {
     /// The tone key follows the last vowel instead of ending the word.
-    tone_after_vowels: bool,
+    pub tone_after_vowels: bool,
     /// ươ is typed "uow" instead of "uwow".
-    short_horn_pair: bool,
+    pub short_horn_pair: bool,
     /// Every modifier key is typed after the whole word, before the tone ("duongwd").
-    deferred_modifiers: bool,
+    pub deferred_modifiers: bool,
 }
 
 fn merge_horn_pair(pieces: &mut [TypedLetter]) {
@@ -398,7 +398,7 @@ fn merge_horn_pair(pieces: &mut [TypedLetter]) {
     }
 }
 
-fn telex_keys_for_word(word: &str, style: &TypingStyle) -> String {
+pub fn telex_keys_for_word(word: &str, style: &TypingStyle) -> String {
     let letters: Vec<char> = word.chars().collect();
     let upper_count = letters
         .iter()
@@ -489,7 +489,7 @@ fn apply_case(word: &str, choice: &CaseChoice) -> String {
     }
 }
 
-fn pick_style(random: &mut RandomSource) -> TypingStyle {
+pub fn pick_style(random: &mut RandomSource) -> TypingStyle {
     TypingStyle {
         tone_after_vowels: random.chance(15),
         short_horn_pair: random.chance(20),

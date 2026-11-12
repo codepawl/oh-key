@@ -59,6 +59,27 @@ jobs:
       - name: Build
         run: cargo build -p oh-key-app -p oh-key-cli --release --locked --target ${{ matrix.target }}
 
+  macos-app:
+    # The macOS input method: a universal (arm64 + x86_64) oh-key.app built with swiftc, no Xcode project.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-app
+      - name: Build the app
+        run: bash macos/build.sh
+      - name: Check the bundle
+        run: bash macos/verify.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oh-key-macos
+          path: target/mac/oh-key-macos.zip
+          if-no-files-found: error
+
   hook-e2e:
     # Types through the real keyboard hook into the program's own windows. A hosted runner may
     # have no interactive desktop; the examples then exit with 2 before typing anything, which

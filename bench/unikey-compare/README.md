@@ -5,7 +5,7 @@ Replays one Telex keystroke corpus through UniKey's `ukengine` and through `oh-k
 ## Run it
 
 1. Put the `ukengine` source files of `github.com/vn-input/ibus-unikey` (the `ukengine/` folder, `.cpp` and `.h` only) in an empty folder outside the repository. They are not committed and nothing from that folder is executed except the `cl` command line in `run.ps1`.
-2. `pwsh bench/unikey-compare/run.ps1 -UniKeySource <that folder>`
+2. `pwsh bench/unikey-compare/run.ps1 -UniKeySource <that folder> [-Runs 5]` (each run is saved in `out/runs/`)
 
 It needs Visual Studio Build Tools (found with `vswhere`) and cargo. Output lands in `bench/unikey-compare/out/` (ignored by git).
 
@@ -33,3 +33,11 @@ Each side replays the whole corpus 3 times as warmup, then 20 timed times. The n
 The three outputs are split on whitespace and compared word by word with the expected text. Each differing word falls in one group: only oh-key right, only UniKey right, both wrong and different, both wrong and the same. Decide the cause (UniKey bug, oh-key bug, or a policy difference such as English restore) by reading the listed keystrokes.
 
 Another seed gives another corpus: `compare_corpus <keys> <expected> <seed>`.
+
+## Mixed English / Vietnamese corpus
+
+`pwsh bench/unikey-compare/run-mixed.ps1 [-Runs 5]` (after `run.ps1` has built `unikey_bench.exe`) replays a second corpus of about 300,000 keystrokes through both engines:
+
+- `crates/oh-key-engine/examples/mixed_corpus.rs` writes `mixed.keys`, `mixed.expected` and `mixed.categories` (one letter per token). Categories: a) English words that collide with Telex keys, b) English words that are also Telex Vietnamese, c) brands and proper nouns, d) code and tech tokens, e) mixed Vietnamese / English sentences, f) all caps and capitalised English, g) English followed by punctuation. English tokens must come out as the exact keys typed; Vietnamese tokens as the Vietnamese word. Category b is listed, not judged: both readings are valid.
+- `crates/oh-key-engine/examples/mixed_report.rs` prints one markdown table per category (tokens, distinct tokens, wrong tokens per engine), the distinct failures of each engine, the tokens where only oh-key is wrong, and the full table for category b. `MIXED_REPORT_ROWS=500` lists every failure.
+- The speed figure is the median of the per-run medians (default 5 runs, 20 replays each).

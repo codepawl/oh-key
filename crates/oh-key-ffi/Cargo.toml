@@ -1,0 +1,16 @@
+[package]
+name = "oh-key-ffi"
+description = "C interface to the oh-key typing engine, used by the macOS input method"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "oh_key_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+oh-key-engine = { path = "../oh-key-engine" }
+oh-key-ipc = { path = "../oh-key-ipc" }
+oh-key-macro = { path = "../oh-key-macro" }

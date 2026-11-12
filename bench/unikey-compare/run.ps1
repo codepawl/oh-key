@@ -9,7 +9,8 @@ through both and prints the table. See README.md.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$UniKeySource,
-    [string]$OutputFolder = (Join-Path $PSScriptRoot 'out')
+    [string]$OutputFolder = (Join-Path $PSScriptRoot 'out'),
+    [int]$Runs = 1
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +65,12 @@ $ohkeyText = Join-Path $OutputFolder 'ohkey.txt'
 $ohkeyTiming = Join-Path $OutputFolder 'ohkey.timing'
 
 & (Join-Path $releaseFolder 'compare_corpus.exe') $keysFile $expectedFile
-& (Join-Path $OutputFolder 'unikey_bench.exe') $keysFile $unikeyText $unikeyTiming
-& (Join-Path $releaseFolder 'compare.exe') $keysFile $ohkeyText $ohkeyTiming
+$runsFolder = Join-Path $OutputFolder 'runs'
+New-Item -ItemType Directory -Force $runsFolder | Out-Null
+foreach ($run in 1..$Runs) {
+    & (Join-Path $OutputFolder 'unikey_bench.exe') $keysFile $unikeyText $unikeyTiming | Out-Null
+    & (Join-Path $releaseFolder 'compare.exe') $keysFile $ohkeyText $ohkeyTiming | Out-Null
+    Copy-Item $unikeyTiming (Join-Path $runsFolder "unikey.$run.timing")
+    Copy-Item $ohkeyTiming (Join-Path $runsFolder "ohkey.$run.timing")
+}
 & (Join-Path $releaseFolder 'compare_report.exe') $keysFile $expectedFile $unikeyText $unikeyTiming $ohkeyText $ohkeyTiming

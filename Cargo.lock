@@ -30,6 +30,15 @@ name = "oh-key-engine"
 version = "0.1.0"
 
 [[package]]
+name = "oh-key-ffi"
+version = "0.1.0"
+dependencies = [
+ "oh-key-engine",
+ "oh-key-ipc",
+ "oh-key-macro",
+]
+
+[[package]]
 name = "oh-key-ipc"
 version = "0.1.0"
 dependencies = [

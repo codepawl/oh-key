@@ -91,6 +91,8 @@ pub struct Engine {
     escape_pending: bool,
     /// Key that produced a fixed letter on the previous press (ww, ]]).
     last_mapped_key: Option<char>,
+    /// The last word boundary was a symbol or digit, not a space: `a[0]`, `){`, `#ff`.
+    after_symbol: bool,
     macros: Vec<(String, String)>,
 }
 
@@ -112,6 +114,7 @@ impl Engine {
             key_undone: false,
             escape_pending: false,
             last_mapped_key: None,
+            after_symbol: false,
             macros: Vec::new(),
         }
     }
@@ -138,6 +141,7 @@ impl Engine {
         self.key_undone = false;
         self.escape_pending = false;
         self.last_mapped_key = None;
+        self.after_symbol = false;
     }
 
     /// Returns the composing word and clears it.
@@ -235,10 +239,12 @@ impl Engine {
     fn finish_with_boundary(&mut self, key: char) -> KeyResult {
         if !self.is_composing() {
             self.reset();
+            self.after_symbol = !key.is_whitespace();
             return KeyResult::PassThrough;
         }
         let mut text = self.finish_word();
         text.push(key);
+        self.after_symbol = !key.is_whitespace();
         KeyResult::Commit(text)
     }
 
@@ -613,6 +619,10 @@ impl Engine {
         upper: bool,
         previously_mapped: Option<char>,
     ) -> bool {
+        if self.after_symbol && !self.is_composing() {
+            // "a[0]" and "){" are code, not ơ and ư.
+            return false;
+        }
         if self.undo_mapped_letter(key, base, previously_mapped) {
             return true;
         }
