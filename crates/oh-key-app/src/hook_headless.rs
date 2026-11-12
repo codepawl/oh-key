@@ -963,19 +963,6 @@ fn a_shortcut_while_an_edit_is_in_flight_waits_behind_the_waiting_letters() {
 }
 
 #[test]
-fn a_hook_reinstall_types_the_keys_that_waited_for_a_lost_echo() {
-    let mut flow = echo_gated_flow();
-    let mut sink = RecordingSink::default();
-    type_until_the_tone_edit(&mut flow, &mut sink);
-    sink.now_milliseconds = 10;
-    assert!(press_letter_on(&mut flow, &mut sink, 'j').swallow);
-    flow.forget_held_keys(&mut sink);
-    assert_eq!(sink.edits.len(), 2, "the swallowed letter was lost");
-    assert_eq!(sink.edits[1].text, "j");
-    assert!(flow.deferred_keys.is_empty());
-}
-
-#[test]
 fn a_waiting_key_that_the_system_passed_on_is_not_typed_again() {
     let mut flow = echo_gated_flow();
     let mut sink = RecordingSink::default();
@@ -1056,59 +1043,18 @@ fn the_budget_is_half_the_system_timeout_within_limits() {
 }
 
 #[test]
-fn a_removed_hook_is_noticed_from_input_that_made_no_callback() {
-    assert!(!hook_seems_removed(10_000, 9_800));
-    assert!(hook_seems_removed(12_000, 9_800));
+fn a_call_past_the_timeout_is_noticed() {
+    // The callback itself ran too long.
+    assert!(call_overran(1_000, 1_400, 350, 300));
+    // The callback was quick, but it started long after Windows stamped the key.
+    assert!(call_overran(1_000, 1_320, 5, 300));
+    assert!(!call_overran(1_000, 1_100, 5, 300));
     // The tick counter wraps around after 49 days.
-    assert!(!hook_seems_removed(100, u32::MAX - 100));
-    assert!(hook_seems_removed(3_000, u32::MAX - 100));
-}
-
-fn facts(key_tick: u32, last_reinstall_tick: Option<u32>, callback_since: bool) -> WatchdogFacts {
-    WatchdogFacts {
-        key_tick,
-        last_callback_tick: 0,
-        last_reinstall_tick,
-        callback_since_reinstall: callback_since,
-    }
-}
-
-#[test]
-fn a_live_hook_is_never_reinstalled() {
-    let live = WatchdogFacts {
-        last_callback_tick: 50_000,
-        ..facts(50_000, None, true)
-    };
-    assert!(!should_reinstall(live));
-}
-
-#[test]
-fn reinstalling_is_rate_limited() {
-    assert!(should_reinstall(facts(2_000, None, false)));
-    assert!(!should_reinstall(facts(5_000, Some(1_000), true)));
-    assert!(should_reinstall(facts(11_000, Some(1_000), true)));
-}
-
-#[test]
-fn one_key_without_a_callback_is_only_a_suspect() {
-    // The raw input of a key can be handled before its hook callback.
-    let quiet = facts(20_000, None, false);
-    assert_eq!(watchdog_step(quiet, None, 7), WatchdogStep::Suspect(7));
-    // The callback came after all: the count moved, so the next key starts over.
-    assert_eq!(watchdog_step(quiet, Some(7), 8), WatchdogStep::Suspect(8));
-    assert_eq!(watchdog_step(quiet, Some(7), 7), WatchdogStep::Reinstall);
-    let live = WatchdogFacts {
-        last_callback_tick: 20_000,
-        ..quiet
-    };
-    assert_eq!(watchdog_step(live, Some(7), 7), WatchdogStep::Nothing);
-}
-
-#[test]
-fn a_reinstall_that_brought_no_callback_back_is_not_repeated() {
-    // An elevated window keeps the hook out: reinstalling again would only loop.
-    assert!(!should_reinstall(facts(60_000, Some(1_000), false)));
-    assert!(!should_reinstall(facts(600_000, Some(1_000), false)));
+    assert!(!call_overran(u32::MAX - 50, 50, 5, 300));
+    assert!(call_overran(u32::MAX - 50, 400, 5, 300));
+    // A key with no time stamp only counts the callback's own duration.
+    assert!(!call_overran(0, 900_000, 5, 300));
+    assert!(call_overran(0, 900_000, 300, 300));
 }
 
 #[test]

@@ -601,8 +601,7 @@ mod suite {
             timings.last().copied().unwrap_or(0)
         );
         println!("callbacks over 50 ms: {}", hook::slow_callback_count());
-        let (watched_keys, reinstalls) = hook::watchdog_counts();
-        println!("watchdog: {watched_keys} keys seen, {reinstalls} reinstalls");
+        println!("hook reinstalls: {}", hook::hook_reinstall_count());
     }
 
     fn print_row(case: &Case, outcome: &Outcome) {
