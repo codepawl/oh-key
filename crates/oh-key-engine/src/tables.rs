@@ -221,6 +221,21 @@ pub(crate) fn initial_accepts_vowels(initial: &[u8], sequence: &[u8]) -> bool {
     }
 }
 
+/// "c" after i, ê or quy only starts ich, êch or quych: "míc" and "méc" are not words, so a
+/// marked word that stops there is given back as typed ("misc", "disc", "pics"). The one word
+/// that does end there is the interjection híc.
+pub(crate) fn final_waits_for_h(initial: &[u8], sequence: &[u8], final_bit: u8) -> bool {
+    if final_bit != FINAL_C {
+        return false;
+    }
+    match sequence {
+        b"i" => initial != b"h",
+        b"E" => true,
+        b"y" => initial == b"qu",
+        _ => false,
+    }
+}
+
 /// Pairs that fail the vowel/final table but are still words: quynh, quỵch, giêng; quyc is the prefix of quych.
 pub(crate) fn is_vowel_final_exception(initial: &[u8], sequence: &[u8], final_bit: u8) -> bool {
     match initial {

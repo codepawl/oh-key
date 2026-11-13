@@ -338,6 +338,28 @@ fn invalid_words_come_back_as_typed_at_the_boundary() {
 }
 
 #[test]
+fn a_c_that_only_starts_ich_or_ech_gives_the_word_back() {
+    check(
+        "c waiting for h",
+        telex(),
+        &[
+            ("misc ", "misc "),
+            ("disc ", "disc "),
+            ("pics ", "pics "),
+            ("meecs ", "meecs "),
+            ("mecs ", "méc "),
+            ("quycs ", "quycs "),
+            ("tichs ", "tích "),
+            ("eechs ", "ếch "),
+            ("quychj ", "quỵch "),
+            ("hics ", "híc "),
+            ("hics hics ", "híc híc "),
+            ("mic ", "mic "),
+        ],
+    );
+}
+
+#[test]
 fn telex_brackets() {
     check(
         "brackets",

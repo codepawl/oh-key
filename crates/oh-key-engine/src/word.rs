@@ -146,6 +146,9 @@ impl Word {
         if refused_tone && final_bit & tables::STOP_FINALS != 0 {
             return Validity::Invalid;
         }
+        if tables::final_waits_for_h(initial, sequence, final_bit) {
+            return Validity::Incomplete;
+        }
         completeness(complete)
     }
 
