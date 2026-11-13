@@ -443,7 +443,10 @@ mod tests {
 
     #[test]
     fn start_at_sign_in_asks_for_the_startup_entry_to_follow() {
-        let mut settings = Settings::default();
+        let mut settings = Settings {
+            start_at_sign_in: false,
+            ..Settings::default()
+        };
         assert_eq!(
             apply_choice(&mut settings, Field::StartAtSignIn, SWITCH_ON),
             Effect::SaveAndApplyStartup

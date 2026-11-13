@@ -1,7 +1,8 @@
 # Installs the latest oh-key release (the tray app, oh-key.exe) from codepawl/oh-key-releases,
 # after checking its SHA-256 against SHA256SUMS.txt. The command line tool is in the release zip.
-#   .\install.ps1                    install into %LOCALAPPDATA%\Programs\oh-key and start the app
-#   .\install.ps1 -StartAtSignIn     also start the app every time you sign in
+#   .\install.ps1    install into %LOCALAPPDATA%\Programs\oh-key and start the app
+# The app then starts at every sign-in; the start-with-Windows switch in its panel turns that off.
+# -StartAtSignIn is still accepted for old commands and turns it on at once.
 #
 # No administrator rights are needed: everything goes into your own profile.
 #

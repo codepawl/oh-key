@@ -32,6 +32,7 @@ pub struct Settings {
     pub toggle_hotkey: ToggleHotkey,
     /// Start in Vietnamese mode; false starts with the English passthrough.
     pub start_vietnamese: bool,
+    /// Start the tray app at every Windows sign-in, like any other input method.
     pub start_at_sign_in: bool,
     pub updates: UpdateMode,
     /// Send crash and error reports (never typed text) to the developers.
@@ -50,7 +51,7 @@ impl Default for Settings {
             engine: Config::default(),
             toggle_hotkey: ToggleHotkey::CtrlShift,
             start_vietnamese: true,
-            start_at_sign_in: false,
+            start_at_sign_in: true,
             updates: UpdateMode::Auto,
             send_reports: true,
             sound_effects: true,
@@ -398,6 +399,25 @@ mod tests {
         let settings = Settings::default();
         assert_eq!(settings.updates, UpdateMode::Auto);
         assert!(settings.send_reports);
+    }
+
+    #[test]
+    fn a_new_install_starts_at_sign_in_and_a_saved_choice_wins() {
+        assert!(Settings::default().start_at_sign_in);
+        assert!(
+            parse_settings(
+                "input_method = \"vni\"
+"
+            )
+            .start_at_sign_in
+        );
+        assert!(
+            !parse_settings(
+                "start_at_sign_in = false
+"
+            )
+            .start_at_sign_in
+        );
     }
 
     #[test]

@@ -136,6 +136,7 @@ mod app {
         let settings = load_settings();
         let shared = SharedState::open()?;
         persistence::publish(&settings);
+        sync_startup_entry(settings.start_at_sign_in);
         shared.set_vietnamese(settings.start_vietnamese);
         let _keyboard_hook = start_keyboard_hook()?;
         let outcome = tray::run(shared, started_after_crash);
@@ -200,6 +201,16 @@ mod app {
                 ..report::ReportEvent::new(crashed.report_kind(), &crashed.summary)
             });
         }
+    }
+
+    /// The Run value follows the setting at every start, so a new install starts at sign-in and
+    /// the value always names the exe that runs now. A renamed measurement instance
+    /// (`OHKEY_INSTANCE`) leaves the installed app's value alone.
+    fn sync_startup_entry(start_at_sign_in: bool) {
+        if !instance_suffix().is_empty() {
+            return;
+        }
+        crate::startup::set_start_at_sign_in(start_at_sign_in);
     }
 
     /// `OHKEY_NO_HOOK=1` leaves the hook out, so a measurement build never touches typing.

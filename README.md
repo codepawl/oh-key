@@ -24,7 +24,7 @@ Run this in PowerShell:
 irm https://raw.githubusercontent.com/codepawl/oh-key-releases/main/install.ps1 | iex
 ```
 
-The script downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` and `oh-key-cli.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. To start the app at every sign-in too, save `install.ps1` and run `.\install.ps1 -StartAtSignIn`.
+The script downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. From then on the app starts at every sign-in; turn off "Khởi động cùng Windows" in its panel to stop that. `oh-key-cli.exe` is in the release zip.
 
 You can also download `oh-key-windows-<arch>.zip` from the [latest release](https://github.com/codepawl/oh-key-releases/releases/latest) and unzip it anywhere.
 
