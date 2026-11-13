@@ -687,7 +687,8 @@ pub fn render_frames(graphics: &Graphics, folder: &std::path::Path) -> Result<()
         let frame_count = (DURATION_SECONDS * 30.0).ceil() as usize;
         for frame in 0..=frame_count {
             let offscreen = Offscreen::new(graphics, width, height)?;
-            unsafe { offscreen.target.SetDpi(96.0 * scale, 96.0 * scale) };
+            let dpi = 96.0 * scale * crate::offscreen::export_scale();
+            unsafe { offscreen.target.SetDpi(dpi, dpi) };
             scene.advance_to(frame as f32 / 30.0);
             draw_frame(&offscreen.target, graphics, &scene)?;
             offscreen.save_png(&folder.join(format!("{name}-{frame:02}.png")))?;

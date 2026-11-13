@@ -226,11 +226,24 @@ mod app {
         ))
     }
 
+    /// `--render-png <window> <out> [--scale <1 to 4>]`; the scale sharpens the PNG for video
+    /// and high-dpi docs without changing the layout.
     fn render_png_command(arguments: &[String]) -> Result<()> {
         let (Some(window), Some(output)) = (arguments.first(), arguments.get(1)) else {
             return Err(windows::Win32::Foundation::E_INVALIDARG.into());
         };
+        if let Some(scale) = render_scale_argument(arguments) {
+            crate::offscreen::set_export_scale(scale);
+        }
         render_png::render(&Graphics::new()?, window, &PathBuf::from(output))
+    }
+
+    fn render_scale_argument(arguments: &[String]) -> Option<f32> {
+        let position = arguments
+            .iter()
+            .position(|argument| argument == "--scale")?;
+        let scale: f32 = arguments.get(position + 1)?.parse().ok()?;
+        (1.0..=4.0).contains(&scale).then_some(scale)
     }
 
     /// The mutex handle while this is the only instance. A second launch asks the running

@@ -3,6 +3,7 @@
 //! windows do.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::Win32::Foundation::GENERIC_WRITE;
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -22,7 +23,22 @@ use windows::core::{HSTRING, Interface, Result};
 
 use crate::graphics::Graphics;
 
-/// A bitmap of `width` x `height` pixels and a Direct2D target that draws into it at 96 dpi.
+/// The `--render-png --scale` factor, stored as `f32` bits. Only the PNG export sets it, just
+/// before it exits, so the tray icons and the live mode flash always draw at 1.
+static EXPORT_SCALE_BITS: AtomicU32 = AtomicU32::new(0x3F80_0000);
+
+/// Makes every later `Offscreen` hold `scale` times the pixels at `scale` times the dpi, so an
+/// exported PNG is sharp at that size and the layout in device-independent pixels is unchanged.
+pub fn set_export_scale(scale: f32) {
+    EXPORT_SCALE_BITS.store(scale.to_bits(), Ordering::Relaxed);
+}
+
+pub fn export_scale() -> f32 {
+    f32::from_bits(EXPORT_SCALE_BITS.load(Ordering::Relaxed))
+}
+
+/// A bitmap of `width` x `height` device-independent pixels, times the export scale, and a
+/// Direct2D target that draws into it at 96 dpi times the export scale.
 pub struct Offscreen {
     imaging: IWICImagingFactory,
     bitmap: IWICBitmap,
@@ -34,6 +50,9 @@ pub struct Offscreen {
 impl Offscreen {
     /// COM must be initialised on this thread.
     pub fn new(graphics: &Graphics, width: u32, height: u32) -> Result<Self> {
+        let scale = export_scale();
+        let width = (width as f32 * scale).round() as u32;
+        let height = (height as f32 * scale).round() as u32;
         let imaging: IWICImagingFactory =
             unsafe { CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)? };
         let bitmap = unsafe {
@@ -50,8 +69,8 @@ impl Offscreen {
                 format: DXGI_FORMAT_B8G8R8A8_UNORM,
                 alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
             },
-            dpiX: 96.0,
-            dpiY: 96.0,
+            dpiX: 96.0 * scale,
+            dpiY: 96.0 * scale,
             usage: D2D1_RENDER_TARGET_USAGE_NONE,
             minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
         };
