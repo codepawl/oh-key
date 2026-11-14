@@ -222,8 +222,19 @@ mod app {
         Ok(hook::start(
             hook::app_inputs_provider(SharedState::open()?),
             Box::new(move || toggle_state.set_vietnamese(!toggle_state.vietnamese())),
-            hook::HookOptions::default(),
+            footage_hook_options(),
         ))
+    }
+
+    /// Footage branch only: `OHKEY_ACCEPT_INJECTED_KEYS=1` lets a recording runner type through
+    /// the real hook with `SendInput`. Never merged into main.
+    fn footage_hook_options() -> hook::HookOptions {
+        let accept_injected =
+            std::env::var_os("OHKEY_ACCEPT_INJECTED_KEYS").is_some_and(|value| value == "1");
+        hook::HookOptions {
+            accept_foreign_injected_keys: accept_injected,
+            ..hook::HookOptions::default()
+        }
     }
 
     /// `--render-png <window> <out> [--scale <1 to 4>]`; the scale sharpens the PNG for video
