@@ -442,6 +442,7 @@ mod suite {
                 "ESC" => Action::Chord(vec![VK_ESCAPE]),
                 "CAPS" => Action::Chord(vec![VK_CAPITAL]),
                 "CTRLSHIFT" => Action::Chord(vec![VK_CONTROL, VK_SHIFT]),
+                "SHIFTCTRL" => Action::Chord(vec![VK_SHIFT, VK_CONTROL]),
                 "ALTZ" => Action::Chord(vec![VK_MENU, VK_Z]),
                 "WAIT" => Action::Wait,
                 other => panic!("unknown key script token {other}"),

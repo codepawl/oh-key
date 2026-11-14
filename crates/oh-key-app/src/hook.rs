@@ -59,6 +59,8 @@ const VK_LMENU: u32 = 0xA4;
 const VK_RMENU: u32 = 0xA5;
 const VK_PACKET: u32 = 0xE7;
 const VK_Z: u32 = 0x5A;
+const VK_LWIN: u32 = 0x5B;
+const VK_RWIN: u32 = 0x5C;
 /// Page Up, Page Down, End, Home, the arrows, Select, Print, Execute, Snapshot, Insert, Delete.
 const FIRST_NAVIGATION_KEY: u32 = 0x21;
 const LAST_NAVIGATION_KEY: u32 = 0x2E;
@@ -329,7 +331,23 @@ impl Session {
     }
 }
 
+/// Which modifiers the keyboard held just before a key event, read from the system's key state
+/// (a low-level hook runs before that state takes in the event itself).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HeldModifiers {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub alt: bool,
+    pub windows: bool,
+}
+
 /// Detects the Ctrl+Shift chord: both pressed and released with no other key between.
+///
+/// The events alone are not enough: a release can go missing (a secure desktop such as UAC or
+/// Ctrl+Alt+Del, an elevated window that took the foreground, a hook Windows removed). A
+/// missing release left the old tracker sure that Ctrl was still down with the chord broken, so
+/// the next Ctrl+Shift did nothing and a lone Shift could toggle. So each Ctrl or Shift press
+/// is checked against what the keyboard actually holds.
 #[derive(Debug, Default)]
 pub struct ToggleChordTracker {
     control_seen: bool,
@@ -338,11 +356,17 @@ pub struct ToggleChordTracker {
 }
 
 impl ToggleChordTracker {
-    pub fn key_down(&mut self, virtual_key: u32) {
+    /// `held` is the keyboard state before this press, when the caller can read it.
+    pub fn key_down(&mut self, virtual_key: u32, held: Option<HeldModifiers>) {
+        let chord_key = is_control_key(virtual_key) || is_shift_key(virtual_key);
+        if chord_key && let Some(held) = held {
+            self.follow_held_keys(held);
+        }
         let starts_new_chord = !self.control_seen && !self.shift_seen;
-        if starts_new_chord && (is_control_key(virtual_key) || is_shift_key(virtual_key)) {
-            // Letters typed before the modifiers went down belong to no chord.
-            self.chord_broken = false;
+        if starts_new_chord && chord_key {
+            // Letters typed before the modifiers went down belong to no chord, but Alt or the
+            // Windows key held under them makes it another shortcut.
+            self.chord_broken = held.is_some_and(|held| held.alt || held.windows);
         }
         if is_control_key(virtual_key) {
             self.control_seen = true;
@@ -361,6 +385,18 @@ impl ToggleChordTracker {
         let completed = self.control_seen && self.shift_seen && !self.chord_broken;
         *self = ToggleChordTracker::default();
         completed
+    }
+
+    /// With neither Ctrl nor Shift held, whatever the tracker remembers is left over from
+    /// releases it never saw. A modifier held without a press seen (pressed while the hook could
+    /// not see it, or held across the previous toggle) still counts toward the chord.
+    fn follow_held_keys(&mut self, held: HeldModifiers) {
+        if !held.ctrl && !held.shift {
+            *self = ToggleChordTracker::default();
+            return;
+        }
+        self.control_seen |= held.ctrl;
+        self.shift_seen |= held.shift;
     }
 }
 
@@ -495,6 +531,8 @@ pub struct KeyOutcome {
 pub struct KeyFlow {
     pub session: Session,
     chord: ToggleChordTracker,
+    /// The keyboard state before the current event, when the caller read it.
+    held_modifiers: Option<HeldModifiers>,
     toggle_hotkey: ToggleHotkey,
     vietnamese: bool,
     excluded_apps: Vec<String>,
@@ -527,6 +565,7 @@ impl KeyFlow {
         KeyFlow {
             session: Session::new(config),
             chord: ToggleChordTracker::default(),
+            held_modifiers: None,
             toggle_hotkey,
             vietnamese: false,
             excluded_apps: Vec::new(),
@@ -655,13 +694,15 @@ impl KeyFlow {
         }
     }
 
-    /// The foreground window changed: drop the word and the chord. A pending release stays,
-    /// because the application that gets it never saw the press.
+    /// The foreground window changed: drop the word. A pending release stays, because the
+    /// application that gets it never saw the press.
     /// Keys that still waited were typed for the window left behind; they are dropped rather
     /// than typed into the new one.
+    /// The chord stays: the mode is global, and the window often changes under a held Ctrl
+    /// (the target of Alt+Tab activates a moment late, a toast takes the focus), which used to
+    /// throw the toggle away.
     pub fn deactivate(&mut self) {
         self.active = false;
-        self.chord = ToggleChordTracker::default();
         self.session.reset();
         self.deferred_keys.clear();
         self.echoes_outstanding = 0;
@@ -705,8 +746,15 @@ impl KeyFlow {
         true
     }
 
+    /// What the keyboard held before the event about to be handled; read only by the next
+    /// `key_down`.
+    pub fn observe_held_modifiers(&mut self, held: HeldModifiers) {
+        self.held_modifiers = Some(held);
+    }
+
     /// The Ctrl+Shift chord completes on release; a swallowed key's release is swallowed too.
     pub fn key_up(&mut self, virtual_key: u32) -> KeyOutcome {
+        self.held_modifiers = None;
         let swallow = self.take_swallowed(virtual_key);
         let completed = self.chord.key_up(virtual_key);
         let toggled = completed && self.toggle_hotkey == ToggleHotkey::CtrlShift;
@@ -725,7 +773,7 @@ impl KeyFlow {
         read_press: impl FnOnce() -> KeyPress,
         sink: &mut impl OutputSink,
     ) -> KeyOutcome {
-        self.chord.key_down(virtual_key);
+        self.chord.key_down(virtual_key, self.held_modifiers.take());
         // A press that is not swallowed again below must not leave an old pending release
         // behind, or the release of a key the application saw pressed would be swallowed.
         self.take_swallowed(virtual_key);
@@ -1095,6 +1143,13 @@ fn read_macros(macro_enabled: bool) -> Vec<(String, String)> {
 
 /// Lower case file name of the executable that runs process `process_id`.
 pub fn process_exe_name(process_id: u32) -> Option<String> {
+    let path = process_image_path(process_id)?;
+    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
+    Some(file_name.to_lowercase())
+}
+
+/// Full path of the executable that runs process `process_id`, as Windows spells it.
+pub fn process_image_path(process_id: u32) -> Option<String> {
     let process = unsafe {
         Owned::new(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?)
     };
@@ -1109,9 +1164,7 @@ pub fn process_exe_name(process_id: u32) -> Option<String> {
         )
         .ok()?;
     }
-    let path = String::from_utf16_lossy(&buffer[..length as usize]);
-    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
-    Some(file_name.to_lowercase())
+    Some(String::from_utf16_lossy(&buffer[..length as usize]))
 }
 
 pub fn window_exe_name(window: HWND) -> Option<String> {
@@ -1405,6 +1458,9 @@ impl HookState {
         let outcome = if matches!(message, WM_KEYUP | WM_SYSKEYUP) {
             self.flow.key_up(virtual_key)
         } else if matches!(message, WM_KEYDOWN | WM_SYSKEYDOWN) {
+            if is_control_key(virtual_key) || is_shift_key(virtual_key) {
+                self.flow.observe_held_modifiers(read_held_modifiers());
+            }
             self.flow.key_down(
                 virtual_key,
                 key_is_down(VK_MENU),
@@ -1417,6 +1473,16 @@ impl HookState {
         };
         self.run_toggle_action(outcome);
         outcome.swallow
+    }
+}
+
+/// Five key state reads, done only for a Ctrl or Shift press so letters stay cheap.
+fn read_held_modifiers() -> HeldModifiers {
+    HeldModifiers {
+        ctrl: key_is_down(VK_CONTROL),
+        shift: key_is_down(VK_SHIFT),
+        alt: key_is_down(VK_MENU),
+        windows: key_is_down(VK_LWIN) || key_is_down(VK_RWIN),
     }
 }
 
@@ -1954,7 +2020,7 @@ mod tests {
     fn chord_after(downs: &[u32], up: u32) -> bool {
         let mut tracker = ToggleChordTracker::default();
         for virtual_key in downs {
-            tracker.key_down(*virtual_key);
+            tracker.key_down(*virtual_key, None);
         }
         tracker.key_up(up)
     }
@@ -2149,10 +2215,10 @@ mod tests {
     #[test]
     fn a_chord_after_typed_letters_still_counts() {
         let mut tracker = ToggleChordTracker::default();
-        tracker.key_down(u32::from(b'V'));
-        tracker.key_down(u32::from(b' '));
-        tracker.key_down(VK_LCONTROL);
-        tracker.key_down(VK_LSHIFT);
+        tracker.key_down(u32::from(b'V'), None);
+        tracker.key_down(u32::from(b' '), None);
+        tracker.key_down(VK_LCONTROL, None);
+        tracker.key_down(VK_LSHIFT, None);
         assert!(tracker.key_up(VK_LSHIFT));
     }
 

@@ -43,6 +43,8 @@ pub struct Settings {
     pub visual_effects: bool,
     /// Lower case executable names of the apps where oh-key stays off.
     pub excluded_apps: Vec<String>,
+    /// Switch to English while a game has the focus, and back when it leaves.
+    pub english_in_games: bool,
 }
 
 impl Default for Settings {
@@ -57,6 +59,7 @@ impl Default for Settings {
             sound_effects: true,
             visual_effects: true,
             excluded_apps: Vec::new(),
+            english_in_games: true,
         }
     }
 }
@@ -174,6 +177,7 @@ pub fn format_settings(settings: &Settings) -> String {
         format!("sound_effects = {}", settings.sound_effects),
         format!("visual_effects = {}", settings.visual_effects),
         format!("excluded_apps = \"{}\"", settings.excluded_apps.join(", ")),
+        format!("english_in_games = {}", settings.english_in_games),
     ];
     let mut text = lines.join("\n");
     text.push('\n');
@@ -202,6 +206,7 @@ fn apply_setting(settings: &mut Settings, key: &str, value: &str) {
         "send_reports" => set_flag(&mut settings.send_reports, value),
         "sound_effects" => set_flag(&mut settings.sound_effects, value),
         "visual_effects" => set_flag(&mut settings.visual_effects, value),
+        "english_in_games" => set_flag(&mut settings.english_in_games, value),
         "updates" => {
             if let Some(mode) = parse_update_mode(value) {
                 settings.updates = mode;
@@ -340,6 +345,15 @@ mod tests {
     }
 
     #[test]
+    fn english_in_games_is_on_by_default_and_can_be_turned_off() {
+        assert!(Settings::default().english_in_games);
+        assert!(parse_settings("").english_in_games);
+        let settings = parse_settings("english_in_games = false\n");
+        assert!(!settings.english_in_games);
+        assert_eq!(parse_settings(&format_settings(&settings)), settings);
+    }
+
+    #[test]
     fn the_old_hook_apps_line_is_ignored() {
         let settings = parse_settings("hook_apps = \"game.exe\"\n");
         assert!(settings.excluded_apps.is_empty());
@@ -387,6 +401,7 @@ mod tests {
                         sound_effects: false,
                         visual_effects: false,
                         excluded_apps: vec!["game.exe".to_owned(), "terminal.exe".to_owned()],
+                        english_in_games: false,
                     };
                     assert_eq!(parse_settings(&format_settings(&settings)), settings);
                 }
