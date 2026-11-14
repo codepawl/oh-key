@@ -3,7 +3,7 @@
 //! cannot drift apart.
 //!
 //! Key script: plain characters are typed; `{BS}` `{ENTER}` `{TAB}` `{ESC}` `{CAPS}` press that
-//! key, `{CTRLSHIFT}` and `{ALTZ}` press the toggle chords, `{WAIT}` pauses so the autocomplete
+//! key, `{CTRLSHIFT}`, `{SHIFTCTRL}` and `{ALTZ}` press the toggle chords, `{WAIT}` pauses so the autocomplete
 //! suggestion lands. An `expected` starting with `mode:` compares the Vietnamese/English mode.
 //! `hotkey` is 0 for Ctrl+Shift, 1 for Alt+Z, 2 for none.
 
@@ -148,6 +148,13 @@ pub fn all_cases() -> Vec<Case> {
             "text window coffee ",
         ),
         case("toggle-ctrl-shift", Plain, "{CTRLSHIFT}", "mode:english"),
+        case("toggle-shift-ctrl", Plain, "{SHIFTCTRL}", "mode:english"),
+        case(
+            "toggle-shift-ctrl-then-english",
+            Plain,
+            "vieetj {SHIFTCTRL}vieetj ",
+            "việt vieetj ",
+        ),
         case(
             "toggle-ctrl-shift-twice",
             Plain,
