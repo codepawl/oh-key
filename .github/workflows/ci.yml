@@ -218,7 +218,7 @@ jobs:
           dpkg-deb --info target/linux/oh-key_*_amd64.deb
           dpkg-deb --contents target/linux/oh-key_*_amd64.deb | grep -E 'libexec/ibus-engine-oh-key|component/oh-key.xml'
           tar -tzf target/linux/oh-key-linux-x86_64.tar.gz | grep -E 'install.sh|ibus-engine-oh-key'
-          xmllint --noout target/linux/deb/usr/share/ibus/component/oh-key.xml
+          grep -q '<exec>/usr/libexec/ibus-engine-oh-key --ibus</exec>' target/linux/deb/usr/share/ibus/component/oh-key.xml
       - uses: actions/upload-artifact@v4
         with:
           name: oh-key-linux
