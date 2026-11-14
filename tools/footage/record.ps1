@@ -69,7 +69,7 @@ function Stop-Recording($process) {
 }
 
 function Save-Screenshot([string]$name) {
-    & ffmpeg -y -loglevel error -f gdigrab -frames:v 1 -i desktop (Join-Path $OutFolder "$name.png")
+    & ffmpeg -y -loglevel error -f gdigrab -i desktop -frames:v 1 (Join-Path $OutFolder "$name.png")
 }
 
 function Focus-Process($process) {
@@ -93,6 +93,7 @@ function Record-NotepadScene([string]$name, [string]$script, [int]$pace) {
     $notepad = Open-Notepad
     $recording = Start-Recording $name
     [FootageTyper]::Run($script, $pace)
+    [FootageTyper]::TakeEvents() | Set-Content (Join-Path $OutFolder "$name-keys.txt")
     Stop-Recording $recording
     Save-Screenshot "$name-end"
     Stop-Process -Id $notepad.Id -Force
@@ -147,6 +148,7 @@ if (Test-Path $chromePath) {
     Save-Screenshot 'chrome-before'
     $recording = Start-Recording 'chrome-search'
     [FootageTyper]::Run('caf phee suwax ddas gaafn ddaay{WAIT 2000}', 120)
+    [FootageTyper]::TakeEvents() | Set-Content (Join-Path $OutFolder "chrome-search-keys.txt")
     Stop-Recording $recording
     Save-Screenshot 'chrome-search-end'
     Stop-Process -Id $chrome.Id -Force -ErrorAction SilentlyContinue

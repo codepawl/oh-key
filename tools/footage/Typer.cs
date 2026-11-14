@@ -23,6 +23,7 @@ public static class FootageTyper
         [FieldOffset(0)] public long Padding0;
         [FieldOffset(8)] public long Padding1;
         [FieldOffset(16)] public long Padding2;
+        [FieldOffset(24)] public long Padding3;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -52,7 +53,27 @@ public static class FootageTyper
         var input = new Input { Type = InputKeyboard };
         input.Data.Keyboard.VirtualKey = virtualKey;
         input.Data.Keyboard.Flags = release ? KeyUp : 0;
-        SendInput(1, new[] { input }, Marshal.SizeOf(typeof(Input)));
+        uint sent = SendInput(1, new[] { input }, Marshal.SizeOf(typeof(Input)));
+        if (sent != 1)
+        {
+            throw new InvalidOperationException(
+                "SendInput failed, error " + Marshal.GetLastWin32Error() + ", input size " + Marshal.SizeOf(typeof(Input)));
+        }
+        if (!release)
+        {
+            Events.Add(Clock.ElapsedMilliseconds + " down " + virtualKey);
+        }
+    }
+
+    static readonly System.Diagnostics.Stopwatch Clock = new System.Diagnostics.Stopwatch();
+    static readonly System.Collections.Generic.List<string> Events = new System.Collections.Generic.List<string>();
+
+    /// Key-down times since `Run` began, one "milliseconds down virtual-key" line each.
+    public static string[] TakeEvents()
+    {
+        string[] lines = Events.ToArray();
+        Events.Clear();
+        return lines;
     }
 
     static void Tap(ushort virtualKey, int holdMilliseconds)
@@ -93,6 +114,8 @@ public static class FootageTyper
     /// `pace` is the average gap between keys in milliseconds.
     public static void Run(string script, int pace)
     {
+        Clock.Restart();
+        Events.Clear();
         int index = 0;
         while (index < script.Length)
         {
