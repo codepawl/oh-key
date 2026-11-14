@@ -38,6 +38,7 @@ use windows::core::{BOOL, HSTRING, Interface, PCWSTR, Result, w};
 
 use crate::graphics::Graphics;
 use crate::layout::{self, Rect};
+use crate::logo;
 use crate::palette::{self, Rgba};
 use crate::{mode_icon, style};
 
@@ -343,7 +344,7 @@ pub fn create_brushes(target: &ID2D1RenderTarget) -> Option<Brushes> {
     })
 }
 
-/// Clears the window to the ink and draws the spark and the title, as the control panel does.
+/// Clears the window to the ink and draws the logo and the title, as the control panel does.
 pub fn begin_window(
     target: &ID2D1RenderTarget,
     graphics: &Graphics,
@@ -354,13 +355,8 @@ pub fn begin_window(
         target.BeginDraw();
         target.Clear(Some(&style::INK));
     }
-    let spark = Rect {
-        left: layout::PADDING - 8.0,
-        top: 18.0,
-        right: layout::PADDING + 22.0,
-        bottom: 54.0,
-    };
-    graphics.draw_spark(target, spark, &brushes.accent);
+    let logo_area = logo::square(layout::PADDING, 36.0, style::LOGO_SIZE);
+    logo::draw(target, &graphics.d2d, logo_area);
     graphics.draw_label(
         target,
         title,
