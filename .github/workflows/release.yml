@@ -11,6 +11,11 @@ on:
       - macos/**
   workflow_dispatch:
 
+# Only dry runs on pull requests are replaced by a newer push; tag runs publish and never cancel.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Read-only by default: the build jobs run third-party actions. Only the publish jobs write.
 permissions:
   contents: read
