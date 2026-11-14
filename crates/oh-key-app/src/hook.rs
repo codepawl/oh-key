@@ -298,7 +298,11 @@ impl Session {
 
     fn handle_backspace(&mut self) -> Verdict {
         if !self.engine.is_composing() {
+            // The application deletes the character. When it was the space or punctuation after
+            // a word, the engine picks that word back up, so a tone typed next lands on it.
+            self.engine.backspace();
             self.sent.clear();
+            self.sent.push_str(self.engine.preedit());
             return Verdict::PassThrough;
         }
         self.engine.backspace();
@@ -2156,6 +2160,24 @@ mod tests {
     fn backspace_with_no_word_passes_through() {
         let mut session = telex_session();
         assert_eq!(session.handle(KeyInput::Backspace), Verdict::PassThrough);
+    }
+
+    #[test]
+    fn backspace_over_the_space_picks_the_word_back_up() {
+        let mut session = telex_session();
+        type_text(&mut session, "vieet ");
+        assert_eq!(session.sent(), "");
+        assert_eq!(session.handle(KeyInput::Backspace), Verdict::PassThrough);
+        assert_eq!(session.sent(), "viêt");
+        let verdict = session.handle(KeyInput::Character('j'));
+        assert_eq!(
+            verdict,
+            Verdict::Swallow(TextEdit {
+                backspaces: 2,
+                text: "ệt".to_owned(),
+            })
+        );
+        assert_eq!(session.sent(), "việt");
     }
 
     #[test]

@@ -36,6 +36,22 @@ const VOWEL_TONED_CHARS: [[char; 6]; 12] = [
     ['y', 'ý', 'ỳ', 'ỷ', 'ỹ', 'ỵ'],
 ];
 
+/// Base letter and mark for each vowel index, the inverse of `VOWEL_INDEX_BY_BASE`.
+const VOWEL_BASE_AND_MARK: [(char, Mark); 12] = [
+    ('a', Mark::None),
+    ('a', Mark::Roof),
+    ('a', Mark::Hook),
+    ('e', Mark::None),
+    ('e', Mark::Roof),
+    ('i', Mark::None),
+    ('o', Mark::None),
+    ('o', Mark::Roof),
+    ('o', Mark::Hook),
+    ('u', Mark::None),
+    ('u', Mark::Hook),
+    ('y', Mark::None),
+];
+
 /// One ASCII code per vowel index, used to look up vowel sequences:
 /// a, A = â, B = ă, e, E = ê, i, o, O = ô, P = ơ, u, U = ư, y.
 const VOWEL_SEQUENCE_CODES: [u8; 12] = *b"aABeEioOPuUy";
@@ -82,6 +98,23 @@ impl Letter {
         // Lowercase letters, and letters like İ and ǅ that do not lowercase and
         // capitalize back to themselves, are kept exactly as typed.
         Letter::new(key, Mark::None, false)
+    }
+
+    /// The letter and tone a Vietnamese character such as 'ệ' or 'Đ' is made of; `None` for
+    /// any other character.
+    pub fn from_vietnamese_char(character: char) -> Option<(Letter, u8)> {
+        let upper = character.is_uppercase();
+        let lower = character.to_lowercase().next()?;
+        if lower == 'đ' {
+            return Some((Letter::new('d', Mark::Stroke, upper), 0));
+        }
+        for (vowel_index, toned_chars) in VOWEL_TONED_CHARS.iter().enumerate() {
+            if let Some(tone) = toned_chars.iter().position(|&toned| toned == lower) {
+                let (base, mark) = VOWEL_BASE_AND_MARK[vowel_index];
+                return Some((Letter::new(base, mark, upper), tone as u8));
+            }
+        }
+        None
     }
 
     pub fn vowel_index(self) -> Option<usize> {

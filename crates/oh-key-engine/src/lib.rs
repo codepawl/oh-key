@@ -75,6 +75,17 @@ const MAX_WORD_LETTERS: usize = 48;
 const LONGEST_ENGLISH_WORD: usize = 24;
 /// Bytes kept free after a committed word for the key that ended it.
 const BOUNDARY_ROOM: usize = 4;
+/// Backspacing over more boundary keys than this ("word.!?…") no longer reaches the word.
+const MAX_BOUNDARIES_AFTER_WORD: u8 = 8;
+
+/// A copy of up to `MAX_WORD_LETTERS` keys on the stack, so the word can be rebuilt from them
+/// without allocating.
+fn copy_keys(keys: &[char]) -> ([char; MAX_WORD_LETTERS], usize) {
+    let mut copy = ['\0'; MAX_WORD_LETTERS];
+    let count = keys.len().min(MAX_WORD_LETTERS);
+    copy[..count].copy_from_slice(&keys[..count]);
+    (copy, count)
+}
 
 pub struct Engine {
     config: Config,
@@ -93,6 +104,19 @@ pub struct Engine {
     last_mapped_key: Option<char>,
     /// The last word boundary was a symbol or digit, not a space: `a[0]`, `){`, `#ff`.
     after_symbol: bool,
+    /// An escape key was used in the word, so its raw keys no longer replay to what is shown.
+    escaped: bool,
+    /// A backspace left the word showing exactly its typed keys (a word given back as typed):
+    /// the next key that edits it first rebuilds the word from those keys, so a tone typed
+    /// after backspacing a wrong key still lands ("vieetk", backspace, "s" gives "viết").
+    replay_pending: bool,
+    /// The last word finished by a boundary key, kept so that backspacing over the boundary
+    /// picks it back up: its keys, its text without the boundary, and `after_symbol` at its start.
+    previous_word_keys: Vec<char>,
+    previous_word_text: String,
+    previous_word_after_symbol: bool,
+    /// Boundary keys typed since the previous word; 0 when there is no word to pick up.
+    boundaries_after_previous_word: u8,
     macros: Vec<(String, String)>,
 }
 
@@ -115,6 +139,12 @@ impl Engine {
             escape_pending: false,
             last_mapped_key: None,
             after_symbol: false,
+            escaped: false,
+            replay_pending: false,
+            previous_word_keys: Vec::with_capacity(MAX_WORD_LETTERS),
+            previous_word_text: String::with_capacity(MAX_WORD_LETTERS * 3),
+            previous_word_after_symbol: false,
+            boundaries_after_previous_word: 0,
             macros: Vec::new(),
         }
     }
@@ -142,6 +172,9 @@ impl Engine {
         self.escape_pending = false;
         self.last_mapped_key = None;
         self.after_symbol = false;
+        self.escaped = false;
+        self.replay_pending = false;
+        self.boundaries_after_previous_word = 0;
     }
 
     /// Returns the composing word and clears it.
@@ -163,10 +196,18 @@ impl Engine {
         self.macros.clear();
     }
 
+    /// Deletes the last letter of the composing word. With no word composing the host deletes
+    /// the character itself (`PassThrough`); when that character was the last boundary after a
+    /// finished word, the word is picked back up and `is_composing()` turns true, with
+    /// `preedit()` equal to the word's text now before the cursor.
     pub fn backspace(&mut self) -> KeyResult {
         let Some(last_index) = self.word.letters.len().checked_sub(1) else {
+            self.step_back_toward_previous_word();
             return KeyResult::PassThrough;
         };
+        let shows_typed_keys = (self.frozen || self.replay_pending)
+            && !self.escaped
+            && self.preedit.chars().eq(self.raw_keys.iter().copied());
         let deletes_tone_carrier =
             self.word.tone_position(self.config.tone_style) == Some(last_index);
         self.word.letters.pop();
@@ -185,10 +226,17 @@ impl Engine {
         self.raw_keys.clear();
         self.raw_keys.extend(self.preedit.chars());
         self.frozen = self.validity() == Validity::Invalid;
+        self.replay_pending = shows_typed_keys;
         KeyResult::Composing
     }
 
     pub fn process_key(&mut self, key: char) -> KeyResult {
+        if self.replay_pending {
+            self.replay_pending = false;
+            if self.key_edits_word(key) {
+                self.replay_raw_keys();
+            }
+        }
         let previously_mapped = self.last_mapped_key.take();
         if self.word.letters.len() >= MAX_WORD_LETTERS {
             return self.finish_with_boundary(key);
@@ -224,7 +272,109 @@ impl Engine {
             return self.finish_with_boundary(key);
         }
         self.escape_pending = true;
+        self.escaped = true;
         KeyResult::Composing
+    }
+
+    /// A letter, or a key the input method turns into a mark or tone; not a boundary.
+    fn key_edits_word(&self, key: char) -> bool {
+        let action = action_for(self.config.input_method, key);
+        key.is_alphabetic() || !matches!(action, Action::None | Action::Escape)
+    }
+
+    fn replay_raw_keys(&mut self) {
+        let (keys, count) = copy_keys(&self.raw_keys);
+        let after_symbol = self.after_symbol;
+        self.replay_keys(&keys[..count], after_symbol);
+    }
+
+    /// Rebuilds the word as if `keys` had just been typed. A Vietnamese character, which the
+    /// keys hold once a backspace has turned them into the shown text, goes back in as its
+    /// letter and tone. Returns false when a key would have ended the word.
+    fn replay_keys(&mut self, keys: &[char], after_symbol: bool) -> bool {
+        self.reset();
+        self.after_symbol = after_symbol;
+        for &key in keys {
+            if !self.replay_key(key) {
+                self.reset();
+                return false;
+            }
+        }
+        true
+    }
+
+    fn replay_key(&mut self, key: char) -> bool {
+        let decomposed = if key.is_ascii() {
+            None
+        } else {
+            Letter::from_vietnamese_char(key)
+        };
+        let Some((letter, tone)) = decomposed else {
+            if !self.is_composing() && !self.key_edits_word(key) {
+                return false;
+            }
+            return self.process_key(key) == KeyResult::Composing;
+        };
+        self.word.letters.push(letter);
+        if tone != 0 {
+            self.word.tone = tone;
+        }
+        self.raw_keys.push(key);
+        self.transformed |= letter.mark != Mark::None || tone != 0;
+        self.after_change();
+        true
+    }
+
+    /// The host is deleting the character before the cursor while no word is composing.
+    fn step_back_toward_previous_word(&mut self) {
+        match self.boundaries_after_previous_word {
+            0 => {}
+            1 => self.resume_previous_word(),
+            count => self.boundaries_after_previous_word = count - 1,
+        }
+    }
+
+    /// Makes the previous word the composing word again, exactly as it was shown.
+    fn resume_previous_word(&mut self) {
+        let (keys, count) = copy_keys(&self.previous_word_keys);
+        let keys = &keys[..count];
+        let replayed = self.replay_keys(keys, self.previous_word_after_symbol);
+        if replayed && self.preedit == self.previous_word_text {
+            return;
+        }
+        if self.previous_word_text.chars().eq(keys.iter().copied()) {
+            // Given back as typed when it was finished ("coffee"): show it as typed, and let
+            // the next key that edits it rebuild it from the keys.
+            self.show_keys_as_typed(keys);
+            return;
+        }
+        // A macro replaced the word; its text is not something the keys can rebuild.
+        self.reset();
+    }
+
+    fn show_keys_as_typed(&mut self, keys: &[char]) {
+        let after_symbol = self.previous_word_after_symbol;
+        self.reset();
+        self.after_symbol = after_symbol;
+        self.raw_keys.extend_from_slice(keys);
+        self.word
+            .letters
+            .extend(keys.iter().map(|&key| Letter::plain(key)));
+        self.refresh_preedit();
+        self.frozen = self.validity() == Validity::Invalid;
+        self.replay_pending = true;
+    }
+
+    /// Keeps the word being finished so a backspace over its boundary can pick it back up.
+    /// Called before `finish_word`, which clears the keys; the text is added after.
+    fn remember_keys_of_finishing_word(&mut self) -> bool {
+        let can_rebuild = !self.escaped && self.raw_keys.len() <= MAX_WORD_LETTERS;
+        self.previous_word_keys.clear();
+        if can_rebuild {
+            self.previous_word_keys.extend_from_slice(&self.raw_keys);
+            self.previous_word_after_symbol = self.after_symbol;
+        }
+        can_rebuild
     }
 
     fn append_literal(&mut self, key: char) -> KeyResult {
@@ -238,11 +388,21 @@ impl Engine {
 
     fn finish_with_boundary(&mut self, key: char) -> KeyResult {
         if !self.is_composing() {
+            let boundaries = self.boundaries_after_previous_word;
             self.reset();
             self.after_symbol = !key.is_whitespace();
+            if boundaries > 0 && boundaries < MAX_BOUNDARIES_AFTER_WORD {
+                self.boundaries_after_previous_word = boundaries + 1;
+            }
             return KeyResult::PassThrough;
         }
+        let remembered = self.remember_keys_of_finishing_word();
         let mut text = self.finish_word();
+        if remembered {
+            self.previous_word_text.clear();
+            self.previous_word_text.push_str(&text);
+            self.boundaries_after_previous_word = 1;
+        }
         text.push(key);
         self.after_symbol = !key.is_whitespace();
         KeyResult::Commit(text)
