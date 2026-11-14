@@ -175,9 +175,14 @@ jobs:
           $folder = Join-Path $env:LOCALAPPDATA 'Programs\oh-key'
           $installed = Join-Path $folder 'oh-key.exe'
           if (-not (Test-Path $installed)) { throw "Setup did not install $installed." }
-          $printed = & $installed --version
+          # oh-key.exe is a GUI program: PowerShell neither waits for it nor reads its output
+          # unless it goes through Start-Process.
+          $versionFile = Join-Path $env:RUNNER_TEMP 'installed-version.txt'
+          Start-Process $installed -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $versionFile
+          [string]$printed = (Get-Content $versionFile -Raw).Trim()
+          $expected = 'oh-key ' + (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
           Write-Host "installed oh-key --version printed: $printed"
-          if ($printed -notmatch '^oh-key \d+\.\d+\.\d+') { throw "Unexpected --version output: $printed" }
+          if ($printed -ne $expected) { throw "--version printed '$printed', expected '$expected'." }
           $runValue = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'oh-key').'oh-key'
           if ($runValue -ne "`"$installed`"") { throw "Run value is $runValue." }
           $uninstall = Start-Process (Join-Path $folder 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
