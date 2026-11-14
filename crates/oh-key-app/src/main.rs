@@ -12,6 +12,8 @@ mod crash;
 #[cfg(windows)]
 mod excluded_apps_window;
 #[cfg(windows)]
+mod game_mode;
+#[cfg(windows)]
 mod graphics;
 #[cfg(windows)]
 mod hook;

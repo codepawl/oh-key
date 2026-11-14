@@ -246,6 +246,7 @@ struct SimulatedHook {
     ctrl_down: bool,
     shift_down: bool,
     alt_down: bool,
+    windows_down: bool,
     caps_lock_on: bool,
     toggles: usize,
 }
@@ -262,6 +263,7 @@ impl SimulatedHook {
             ctrl_down: false,
             shift_down: false,
             alt_down: false,
+            windows_down: false,
             caps_lock_on: false,
             toggles: 0,
         }
@@ -325,6 +327,9 @@ impl SimulatedHook {
     /// What the hook decides for a key press, without the application's share of it.
     fn decide_key_down(&mut self, virtual_key: u32) -> (KeyOutcome, KeyPress) {
         let press = self.key_press(virtual_key);
+        if is_control_key(virtual_key) || is_shift_key(virtual_key) {
+            self.flow.observe_held_modifiers(self.held_modifiers());
+        }
         let outcome = self.flow.key_down(
             virtual_key,
             self.alt_down,
@@ -368,11 +373,34 @@ impl SimulatedHook {
 
     fn remember_modifier(&mut self, virtual_key: u32, down: bool) {
         match virtual_key {
-            VK_CONTROL => self.ctrl_down = down,
-            VK_SHIFT => self.shift_down = down,
-            VK_MENU => self.alt_down = down,
+            VK_CONTROL | VK_LCONTROL | VK_RCONTROL => self.ctrl_down = down,
+            VK_SHIFT | VK_LSHIFT | VK_RSHIFT => self.shift_down = down,
+            VK_MENU | VK_LMENU | VK_RMENU => self.alt_down = down,
+            VK_LWIN | VK_RWIN => self.windows_down = down,
             _ => {}
         }
+    }
+
+    /// What `GetAsyncKeyState` would say before the next event.
+    fn held_modifiers(&self) -> HeldModifiers {
+        HeldModifiers {
+            ctrl: self.ctrl_down,
+            shift: self.shift_down,
+            alt: self.alt_down,
+            windows: self.windows_down,
+        }
+    }
+
+    /// A key event the hook never got: a secure desktop (UAC, Ctrl+Alt+Del) or an elevated
+    /// window had the keyboard. The system's key state still follows it.
+    fn key_event_unseen(&mut self, virtual_key: u32, down: bool) {
+        self.remember_modifier(virtual_key, down);
+    }
+
+    /// The foreground window changed between two key events, as `HookState::catch_up` sees it.
+    fn switch_window(&mut self) {
+        self.flow.deactivate();
+        self.flow.set_foreground_exe(SUITE_EXE.to_owned());
     }
 
     /// Presses the keys in order and releases them in reverse, like `press_chord` in the suite.
@@ -425,6 +453,7 @@ impl SimulatedHook {
             "ESC" => self.press_chord(&[VK_ESCAPE]),
             "CAPS" => self.press_caps_lock(),
             "CTRLSHIFT" => self.press_chord(&[VK_CONTROL, VK_SHIFT]),
+            "SHIFTCTRL" => self.press_chord(&[VK_SHIFT, VK_CONTROL]),
             "ALTZ" => self.press_chord(&[VK_MENU, VK_Z]),
             "WAIT" => self.output.field.let_suggestion_arrive(),
             other => panic!("unknown key script token {other}"),
@@ -1240,4 +1269,151 @@ fn a_swallow_that_windows_ignored_does_not_swallow_the_release() {
     assert!(swallowed.swallow);
     flow.release_swallow(virtual_key);
     assert!(!flow.key_up(virtual_key).swallow);
+}
+
+// ---------------------------------------------------------------------------------------
+// The Ctrl+Shift toggle under real-world key sequences
+// ---------------------------------------------------------------------------------------
+
+const VK_DELETE: u32 = 0x2E;
+
+fn toggle_hook() -> SimulatedHook {
+    SimulatedHook::new(Control::Plain, ToggleHotkey::CtrlShift, Vec::new())
+}
+
+#[test]
+fn a_window_switch_under_the_held_ctrl_keeps_the_toggle() {
+    // Alt+Tab activates its target a moment late; the first keys after it can land on either
+    // side of the switch.
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.switch_window();
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    hook.key_up(VK_LCONTROL);
+    assert_eq!(hook.toggles, 1);
+    assert!(!hook.flow.is_vietnamese());
+}
+
+#[test]
+fn alt_tab_then_ctrl_shift_toggles() {
+    let mut hook = toggle_hook();
+    hook.run_script("vieetj ");
+    hook.key_down(VK_LMENU);
+    hook.key_down(VK_TAB);
+    hook.key_up(VK_TAB);
+    hook.key_up(VK_LMENU);
+    hook.switch_window();
+    hook.run_script("{CTRLSHIFT}");
+    assert_eq!(hook.toggles, 1);
+}
+
+#[test]
+fn ctrl_tab_then_ctrl_shift_toggles() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_down(VK_TAB);
+    hook.key_up(VK_TAB);
+    hook.key_up(VK_LCONTROL);
+    hook.run_script("{CTRLSHIFT}");
+    assert_eq!(hook.toggles, 1);
+}
+
+#[test]
+fn releases_lost_to_an_elevated_window_do_not_eat_the_next_toggle() {
+    // Ctrl+Shift+Esc opens Task Manager elevated: the hook never sees the three releases.
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_down(VK_LSHIFT);
+    hook.key_down(VK_ESCAPE);
+    hook.key_event_unseen(VK_ESCAPE, false);
+    hook.key_event_unseen(VK_LSHIFT, false);
+    hook.key_event_unseen(VK_LCONTROL, false);
+    hook.switch_window();
+    hook.run_script("{CTRLSHIFT}");
+    assert_eq!(hook.toggles, 1);
+    assert!(!hook.flow.is_vietnamese());
+}
+
+#[test]
+fn releases_lost_to_a_secure_desktop_do_not_eat_the_next_toggle() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_down(VK_LMENU);
+    hook.key_down(VK_DELETE);
+    for virtual_key in [VK_DELETE, VK_LMENU, VK_LCONTROL] {
+        hook.key_event_unseen(virtual_key, false);
+    }
+    hook.run_script("{SHIFTCTRL}");
+    assert_eq!(hook.toggles, 1);
+}
+
+#[test]
+fn a_lone_shift_after_a_lost_ctrl_release_does_not_toggle() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_event_unseen(VK_LCONTROL, false);
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    assert_eq!(hook.toggles, 0);
+    assert!(hook.flow.is_vietnamese());
+}
+
+#[test]
+fn ctrl_held_across_a_toggle_toggles_again_with_the_next_shift() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    hook.key_up(VK_LCONTROL);
+    assert_eq!(hook.toggles, 2);
+    assert!(hook.flow.is_vietnamese());
+}
+
+#[test]
+fn a_ctrl_press_the_hook_missed_still_counts_toward_the_chord() {
+    // Ctrl went down while an elevated window had the keyboard, then the focus came back.
+    let mut hook = toggle_hook();
+    hook.key_event_unseen(VK_LCONTROL, true);
+    hook.switch_window();
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    hook.key_up(VK_LCONTROL);
+    assert_eq!(hook.toggles, 1);
+}
+
+#[test]
+fn a_hook_reinstall_between_ctrl_and_shift_keeps_the_toggle() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.flow.forget_held_keys(&mut hook.output);
+    hook.key_down(VK_LSHIFT);
+    hook.key_up(VK_LSHIFT);
+    hook.key_up(VK_LCONTROL);
+    assert_eq!(hook.toggles, 1);
+}
+
+#[test]
+fn alt_or_windows_held_under_ctrl_shift_is_another_shortcut() {
+    for other_modifier in [VK_LMENU, VK_LWIN] {
+        let mut hook = toggle_hook();
+        hook.key_down(other_modifier);
+        hook.run_script("{CTRLSHIFT}");
+        hook.key_up(other_modifier);
+        assert_eq!(hook.toggles, 0, "modifier {other_modifier:#x}");
+    }
+}
+
+#[test]
+fn a_key_between_ctrl_and_the_shift_release_still_cancels_the_toggle() {
+    let mut hook = toggle_hook();
+    hook.key_down(VK_LCONTROL);
+    hook.key_down(VK_LSHIFT);
+    hook.key_down(VK_TAB);
+    hook.key_up(VK_TAB);
+    hook.key_up(VK_LSHIFT);
+    hook.key_up(VK_LCONTROL);
+    assert_eq!(hook.toggles, 0);
 }

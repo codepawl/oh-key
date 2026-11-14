@@ -24,8 +24,8 @@ use windows::core::{HSTRING, Result, w};
 use crate::settings_model::INPUT_METHOD_CHOICES;
 use crate::update_service::{self, Notice};
 use crate::{
-    app_log, converter_window, macros_window, mode_effects, mode_icon, persistence, report,
-    settings_window, updater,
+    app_log, converter_window, game_mode, macros_window, mode_effects, mode_icon, persistence,
+    report, settings_window, updater,
 };
 
 pub const TRAY_CLASS: windows::core::PCWSTR = w!("oh-key.tray");
@@ -166,6 +166,7 @@ pub fn run(shared: SharedState, restarted_after_crash: bool) -> Result<()> {
         );
     }
     start_update_checks(hwnd);
+    game_mode::start();
     run_message_loop(tray, hwnd);
     drop(unsafe { Box::from_raw(tray_pointer) });
     Ok(())
