@@ -156,7 +156,7 @@ Save-Screenshot 'desktop-start'
 
 Record-NotepadScene 'notepad-coffee' 'Sangs nay uoongs coffee voiws boss, nhows guiwr pass wifi nhes{WAIT 1500}' 80
 Record-NotepadScene 'notepad-toggle' 'Gox tieengs Vieetj {WAIT 400}{TOGGLE}{WAIT 1200}then English {WAIT 400}{TOGGLE}{WAIT 1200}roofi Vieetj tieeps{WAIT 1500}' 85
-Record-NotepadScene 'notepad-reedit' 'Looix space roofi: viet {WAIT 700}{BS}{WAIT 500}j vaanx suwar dduwowcj{WAIT 1500}' 90
+Record-NotepadScene 'notepad-reedit' 'Looix space roofi: vieet {WAIT 700}{BS}{WAIT 500}j vaanx suwar dduwowcj{WAIT 1500}' 90
 Record-NotepadScene 'notepad-fast' 'Tieengs Vieetj gox nhanh khoong sai, dduowngf, nguwowif, khuyeens, quyeenf, giuwax{WAIT 1500}' 45
 
 Write-Step 'scene chrome-search'
