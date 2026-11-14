@@ -238,3 +238,46 @@ jobs:
             --repo "$PUBLIC_REPO" \
             --title "$TAG" \
             --notes-file release-notes.md
+
+  linux:
+    # The Linux IBus engine: a tarball with an install script, and a deb.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Install the IBus development files
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libibus-1.0-dev pkg-config
+      - name: Build the packages
+        run: bash linux/package.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oh-key-linux-packages
+          path: |
+            target/linux/oh-key-linux-x86_64.tar.gz
+            target/linux/oh-key_*_amd64.deb
+          if-no-files-found: error
+
+  publish-linux:
+    # Attached after the release exists and after the macOS step, which also rewrites
+    # SHA256SUMS.txt, so a failed Linux build never blocks the others.
+    needs: [publish, linux, publish-macos]
+    if: ${{ !cancelled() && needs.publish.result == 'success' && needs.linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: oh-key-linux-packages
+          path: dist
+      - name: Add the Linux packages to SHA256SUMS.txt and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern SHA256SUMS.txt --dir dist
+          cd dist
+          sha256sum oh-key-linux-x86_64.tar.gz oh-key_*_amd64.deb | tee -a SHA256SUMS.txt
+          gh release upload "$TAG" oh-key-linux-x86_64.tar.gz oh-key_*_amd64.deb SHA256SUMS.txt --clobber \
+            --repo "${{ github.repository }}"

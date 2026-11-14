@@ -39,6 +39,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oh-key-ibus"
+version = "0.1.0"
+dependencies = [
+ "oh-key-ffi",
+ "oh-key-ipc",
+]
+
+[[package]]
 name = "oh-key-ipc"
 version = "0.1.0"
 dependencies = [
