@@ -40,6 +40,13 @@ public static class FootageWindow {
         mode.Fields = 0x80000 | 0x100000;
         return ChangeDisplaySettings(ref mode, 0);
     }
+
+    [DllImport("user32.dll")] static extern bool SystemParametersInfo(uint action, uint parameter, IntPtr value, uint flags);
+
+    /// Windows' "Animation effects" switch; the runner has it off, and the mode badge follows it.
+    public static bool EnableAnimations() {
+        return SystemParametersInfo(0x1043, 0, new IntPtr(1), 3);
+    }
 }
 '@
 
@@ -112,6 +119,7 @@ Set-ItemProperty $notepadKey iPointSize 400 -Type DWord
 Set-ItemProperty $notepadKey StatusBar 0 -Type DWord
 Set-ItemProperty $notepadKey fWrap 1 -Type DWord
 Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' EnableAutoTray 0 -Type DWord
+Write-Step "animations on: $([FootageWindow]::EnableAnimations())"
 
 $configFolder = Join-Path $env:APPDATA 'oh-key'
 New-Item -ItemType Directory -Force $configFolder | Out-Null
@@ -127,12 +135,21 @@ $env:OHKEY_ACCEPT_INJECTED_KEYS = '1'
 $env:OHKEY_NO_UPDATES = '1'
 Write-Step 'starting oh-key'
 $ohKey = Start-Process $OhKeyExe -PassThru
-Start-Sleep -Seconds 4
+Start-Sleep -Seconds 3
+# Windows 11 keeps new tray icons in the overflow; promote oh-key's so the V/E icon shows.
+Get-ChildItem 'HKCU:\Control Panel\NotifyIconSettings' -ErrorAction SilentlyContinue | ForEach-Object {
+    $path = (Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue).ExecutablePath
+    if ($path -and $path -like '*oh-key.exe') {
+        Set-ItemProperty $_.PSPath IsPromoted 1 -Type DWord
+        Write-Step "tray icon promoted"
+    }
+}
+Start-Sleep -Seconds 2
 Save-Screenshot 'desktop-start'
 
 Record-NotepadScene 'notepad-coffee' 'Sangs nay uoongs coffee voiws boss, nhows guiwr pass wifi nhes{WAIT 1500}' 120
-Record-NotepadScene 'notepad-toggle' 'Gox tieengs Vieetj {WAIT 400}{TOGGLE}{WAIT 900}then English {WAIT 400}{TOGGLE}{WAIT 900}roofi Vieetj tieeps{WAIT 1500}' 120
-Record-NotepadScene 'notepad-reedit' 'Lowx space roofi: viet {WAIT 700}{BS}{WAIT 500}j vaanx sauwr dduwowcj{WAIT 1500}' 130
+Record-NotepadScene 'notepad-toggle' 'Gox tieengs Vieetj {WAIT 400}{TOGGLE}{WAIT 1200}then English {WAIT 400}{TOGGLE}{WAIT 1200}roofi Vieetj tieeps{WAIT 1500}' 120
+Record-NotepadScene 'notepad-reedit' 'Looix space roofi: viet {WAIT 700}{BS}{WAIT 500}j vaanx suwar dduwowcj{WAIT 1500}' 130
 Record-NotepadScene 'notepad-fast' 'Tieengs Vieetj gox nhanh khoong sai, dduowngf, nguwowif, khuyeens, quyeenf, giuwax{WAIT 1500}' 55
 
 Write-Step 'scene chrome-search'
