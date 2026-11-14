@@ -5,3 +5,5 @@
 *.p12
 *.key
 installer/output/
+web/node_modules/
+web/.wrangler/
