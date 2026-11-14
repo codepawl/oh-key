@@ -4,6 +4,19 @@ on:
   push:
     branches: [main]
   pull_request:
+    # Docs-only changes cannot break a build or a test.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  # The macOS jobs skip pull requests that leave macOS code alone; this keeps them run weekly on main.
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+# A newer push to the same pull request replaces the older run. Pushes to main and scheduled runs finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -12,6 +25,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    # Decides whether a pull request needs the macOS jobs (they cost 10x a Linux minute).
+    # Every other event (push to main, schedule, manual run) always runs them.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      macos: ${{ github.event_name != 'pull_request' || steps.filter.outputs.macos == 'true' }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name != 'pull_request'
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            macos:
+              - 'macos/**'
+              - 'crates/oh-key-ffi/**'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - '.github/workflows/ci.yml'
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -30,8 +67,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [windows-latest, ubuntu-latest, macos-latest]
+        runner: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test the pure crates
+        run: cargo test --workspace --locked
+
+  test-macos:
+    # The same test on macOS, only when the change can reach it (see the changes job).
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -61,6 +110,8 @@ jobs:
 
   macos-app:
     # The macOS input method: a universal (arm64 + x86_64) oh-key.app built with swiftc, no Xcode project.
+    needs: changes
+    if: needs.changes.outputs.macos == 'true'
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
