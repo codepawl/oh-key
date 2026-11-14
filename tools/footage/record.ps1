@@ -15,6 +15,7 @@ using System.Runtime.InteropServices;
 public static class FootageWindow {
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+    [DllImport("user32.dll")] public static extern bool MoveWindow(IntPtr window, int x, int y, int width, int height, bool repaint);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
     public struct DisplayMode {
@@ -79,16 +80,22 @@ function Save-Screenshot([string]$name) {
     & ffmpeg -y -loglevel error -f gdigrab -i desktop -frames:v 1 (Join-Path $OutFolder "$name.png")
 }
 
+# Notepad sits at the top-left at a fixed size so long lines wrap and the reel can frame the
+# whole window without panning.
+$NotepadWidth = 1000
+$NotepadHeight = 540
+
 function Focus-Process($process) {
     $process.Refresh()
     $handle = $process.MainWindowHandle
-    [FootageWindow]::ShowWindow($handle, 3) | Out-Null
+    [FootageWindow]::ShowWindow($handle, 1) | Out-Null
+    [FootageWindow]::MoveWindow($handle, 0, 0, $NotepadWidth, $NotepadHeight, $true) | Out-Null
     [FootageWindow]::SetForegroundWindow($handle) | Out-Null
     Start-Sleep -Milliseconds 600
 }
 
 function Open-Notepad {
-    $notepad = Start-Process notepad -PassThru -WindowStyle Maximized
+    $notepad = Start-Process notepad -PassThru
     $notepad.WaitForInputIdle(10000) | Out-Null
     Start-Sleep -Seconds 1
     Focus-Process $notepad
@@ -147,10 +154,10 @@ Get-ChildItem 'HKCU:\Control Panel\NotifyIconSettings' -ErrorAction SilentlyCont
 Start-Sleep -Seconds 2
 Save-Screenshot 'desktop-start'
 
-Record-NotepadScene 'notepad-coffee' 'Sangs nay uoongs coffee voiws boss, nhows guiwr pass wifi nhes{WAIT 1500}' 120
-Record-NotepadScene 'notepad-toggle' 'Gox tieengs Vieetj {WAIT 400}{TOGGLE}{WAIT 1200}then English {WAIT 400}{TOGGLE}{WAIT 1200}roofi Vieetj tieeps{WAIT 1500}' 120
-Record-NotepadScene 'notepad-reedit' 'Looix space roofi: viet {WAIT 700}{BS}{WAIT 500}j vaanx suwar dduwowcj{WAIT 1500}' 130
-Record-NotepadScene 'notepad-fast' 'Tieengs Vieetj gox nhanh khoong sai, dduowngf, nguwowif, khuyeens, quyeenf, giuwax{WAIT 1500}' 55
+Record-NotepadScene 'notepad-coffee' 'Sangs nay uoongs coffee voiws boss, nhows guiwr pass wifi nhes{WAIT 1500}' 80
+Record-NotepadScene 'notepad-toggle' 'Gox tieengs Vieetj {WAIT 400}{TOGGLE}{WAIT 1200}then English {WAIT 400}{TOGGLE}{WAIT 1200}roofi Vieetj tieeps{WAIT 1500}' 85
+Record-NotepadScene 'notepad-reedit' 'Looix space roofi: viet {WAIT 700}{BS}{WAIT 500}j vaanx suwar dduwowcj{WAIT 1500}' 90
+Record-NotepadScene 'notepad-fast' 'Tieengs Vieetj gox nhanh khoong sai, dduowngf, nguwowif, khuyeens, quyeenf, giuwax{WAIT 1500}' 45
 
 Write-Step 'scene chrome-search'
 $chromePath = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
@@ -158,13 +165,13 @@ if (Test-Path $chromePath) {
     $profileFolder = Join-Path $env:RUNNER_TEMP 'chrome-profile'
     $chrome = Start-Process $chromePath -PassThru -ArgumentList @(
         "--user-data-dir=$profileFolder", '--no-first-run', '--no-default-browser-check',
-        '--start-maximized', '--disable-search-engine-choice-screen', '--force-device-scale-factor=1.5',
+        '--start-maximized', '--disable-search-engine-choice-screen', '--force-device-scale-factor=2',
         'https://www.google.com/?hl=vi'
     )
     Start-Sleep -Seconds 6
     Save-Screenshot 'chrome-before'
     $recording = Start-Recording 'chrome-search'
-    [FootageTyper]::Run('caf phee suwax ddas gaafn ddaay{WAIT 2000}', 120)
+    [FootageTyper]::Run('caf phee suwax ddas gaafn ddaay{WAIT 2000}', 85)
     [FootageTyper]::TakeEvents() | Set-Content (Join-Path $OutFolder "chrome-search-keys.txt")
     Stop-Recording $recording
     Save-Screenshot 'chrome-search-end'
