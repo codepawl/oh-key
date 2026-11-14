@@ -4,3 +4,4 @@
 *.pfx
 *.p12
 *.key
+installer/output/
