@@ -96,7 +96,7 @@ test("a Linux visitor gets the Linux download when the release has it", () => {
   const release = releaseWithLinux();
   const page = renderPage({ release, platform: "linux" });
   assert.match(page, /class="primary" href="\/download\/linux"/);
-  assert.match(page, /oh-key_0\.2\.0_amd64\.deb · Ubuntu, Debian · x86_64/);
+  assert.match(page, /oh-key_0\.2\.0_amd64\.deb · Ubuntu, Debian<\/p>/);
   assert.match(page, /sudo apt install \.\/oh-key_0\.2\.0_amd64\.deb/);
   assert.match(page, /ibus restart/);
   assert.match(page, /data-tab="linux" aria-selected="true"/);

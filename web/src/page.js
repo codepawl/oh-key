@@ -61,7 +61,7 @@ function primaryButton(platform, release) {
     const fileName = release.linuxDeb ? release.linuxDeb.name : LINUX_TARBALL_NAME;
     const distributions = release.linuxDeb ? "Ubuntu, Debian" : "IBus";
     return `<a class="primary" href="/download/linux">${icons.linux}<span>Tải cho Linux</span></a>
-      <p class="file-note">${escapeHtml(fileName)} · ${distributions} · x86_64</p>
+      <p class="file-note">${escapeHtml(fileName)} · ${distributions}</p>
       <p class="status status-beta">${icons.flask}<span>${LINUX_BETA_NOTE}</span></p>`;
   }
   const fileName = release?.windowsSetup ? "oh-key-setup.exe" : "oh-key-windows-x64.zip";
