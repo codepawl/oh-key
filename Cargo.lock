@@ -12,6 +12,7 @@ dependencies = [
  "oh-key-macro",
  "windows",
  "windows-core",
+ "windows-numerics",
 ]
 
 [[package]]

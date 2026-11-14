@@ -24,6 +24,8 @@ mod icons;
 #[cfg(windows)]
 mod layout;
 #[cfg(windows)]
+mod logo;
+#[cfg(windows)]
 mod macros_window;
 #[cfg(windows)]
 mod mode_effects;

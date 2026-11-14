@@ -36,6 +36,7 @@ use windows::core::{BOOL, Interface, Result, w};
 
 use crate::graphics::{self, Graphics};
 use crate::layout::{self, Rect, settings as geometry};
+use crate::logo;
 use crate::offscreen::Offscreen;
 use crate::settings_model::{self, Control, Effect, Field, Row, Tool};
 use crate::{
@@ -748,14 +749,12 @@ impl Scene<'_> {
     }
 
     fn draw_title_bar(&mut self) {
-        let spark = Rect {
-            left: geometry::MARGIN - 8.0,
-            top: 0.0,
-            right: geometry::MARGIN + 22.0,
-            bottom: geometry::TITLE_BAR_HEIGHT,
-        };
-        self.graphics
-            .draw_spark(self.target, spark, &self.brushes.accent);
+        let logo_area = logo::square(
+            geometry::MARGIN,
+            geometry::TITLE_BAR_HEIGHT / 2.0,
+            style::LOGO_SIZE,
+        );
+        logo::draw(self.target, &self.graphics.d2d, logo_area);
         let vertical = (0.0, geometry::TITLE_BAR_HEIGHT);
         let right_edge = geometry::WIDTH - geometry::MARGIN;
         self.label_centred(
