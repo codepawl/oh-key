@@ -25,6 +25,19 @@ const SOCIAL_LINKS = [
 
 const MAC_QUARANTINE_COMMAND = 'xattr -dr com.apple.quarantine "$HOME/Library/Input Methods/oh-key.app"';
 const POWERSHELL_COMMAND = "irm https://ohkey.codepawl.com/install.ps1 | iex";
+const LINUX_TARBALL_NAME = "oh-key-linux-x86_64.tar.gz";
+const LINUX_TARBALL_COMMAND = `tar xzf ${LINUX_TARBALL_NAME} && cd oh-key-linux-x86_64 && sudo ./install.sh`;
+const LINUX_BETA_NOTE = "Bản Linux đang thử nghiệm: đã build và chạy test trong CI, chưa được thử trên máy thật.";
+
+// Releases from before the Linux build, and cached release objects, carry no Linux files.
+function hasLinuxFiles(release) {
+  return Boolean(release?.linuxDeb || release?.linuxTarball);
+}
+
+// The platform whose download leads the page: a Linux visitor gets Windows until a release has Linux files.
+function leadingPlatform(platform, release) {
+  return platform === "linux" && !hasLinuxFiles(release) ? "windows" : platform;
+}
 
 function escapeHtml(text) {
   return String(text)
@@ -44,21 +57,35 @@ function primaryButton(platform, release) {
       <p class="file-note">oh-key-macos.zip · Apple Silicon và Intel · macOS 12 trở lên</p>
       <p class="status status-beta">${icons.flask}<span>Bản macOS đang thử nghiệm, chưa được thử kỹ trong ứng dụng thật.</span></p>`;
   }
+  if (platform === "linux") {
+    const fileName = release.linuxDeb ? release.linuxDeb.name : LINUX_TARBALL_NAME;
+    const distributions = release.linuxDeb ? "Ubuntu, Debian" : "IBus";
+    return `<a class="primary" href="/download/linux">${icons.linux}<span>Tải cho Linux</span></a>
+      <p class="file-note">${escapeHtml(fileName)} · ${distributions}</p>
+      <p class="status status-beta">${icons.flask}<span>${LINUX_BETA_NOTE}</span></p>`;
+  }
   const fileName = release?.windowsSetup ? "oh-key-setup.exe" : "oh-key-windows-x64.zip";
   return `<a class="primary" href="/download/windows">${icons.windows}<span>Tải cho Windows</span></a>
     <p class="file-note">${fileName} · Windows 10 và 11 · x64, ARM64, x86</p>`;
 }
 
-function otherPlatformLink(platform) {
-  if (platform === "macos") {
-    return `<a class="other-platform" href="/download/windows">${icons.windows}<span>Tải cho Windows</span></a>`;
-  }
-  return `<a class="other-platform" href="/download/macos">${icons.apple}<span>Tải cho macOS</span></a>`;
+const PLATFORM_LINKS = [
+  { id: "windows", icon: icons.windows },
+  { id: "macos", icon: icons.apple },
+  { id: "linux", icon: icons.linux },
+];
+const PLATFORM_LABELS = { windows: "Windows", macos: "macOS", linux: "Linux" };
+
+function otherPlatformLinks(leading, release) {
+  return PLATFORM_LINKS
+    .filter((link) => link.id !== leading && (link.id !== "linux" || hasLinuxFiles(release)))
+    .map((link) => `<a class="other-platform" href="/download/${link.id}">${link.icon}<span>Tải cho ${PLATFORM_LABELS[link.id]}</span></a>`)
+    .join("");
 }
 
-function platformNotice(platform) {
-  if (platform === "linux") {
-    return `<p class="status status-off">${icons.ban}<span>Chưa có bản cho Linux. Bản Windows và macOS ở dưới.</span></p>`;
+function platformNotice(platform, release) {
+  if (platform === "linux" && !hasLinuxFiles(release)) {
+    return `<p class="status status-off">${icons.ban}<span>Bản này chưa có file cho Linux. Bản Windows và macOS ở dưới.</span></p>`;
   }
   if (platform === "phone") {
     return `<p class="status status-off">${icons.monitor}<span>oh-key chạy trên máy tính. Mở trang này trên Windows hoặc Mac để tải.</span></p>`;
@@ -98,6 +125,30 @@ function macosSteps() {
     </ol>`;
 }
 
+function linuxSteps(release) {
+  if (!hasLinuxFiles(release)) {
+    return `<p class="status status-off">${icons.ban}<span>Bản này chưa có file cho Linux. Bản mới hơn sẽ có.</span></p>`;
+  }
+  const version = release.version;
+  const installStep = release.linuxDeb
+    ? `<li><p>Tải <strong class="nowrap">${escapeHtml(release.linuxDeb.name)}</strong> rồi cài bằng lệnh này (Ubuntu, Debian và các bản dẫn xuất):</p>${codeLine(`sudo apt install ./${release.linuxDeb.name}`)}</li>`
+    : `<li><p>Tải <strong class="nowrap">${LINUX_TARBALL_NAME}</strong>, giải nén rồi chạy bộ cài:</p>${codeLine(LINUX_TARBALL_COMMAND)}</li>`;
+  const tarballAlternative = release.linuxDeb && release.linuxTarball
+    ? `<div class="alternative">
+      <p>Không dùng apt? Tải <strong class="nowrap">${LINUX_TARBALL_NAME}</strong> (${escapeHtml(version)}) và chạy:</p>
+      ${codeLine(LINUX_TARBALL_COMMAND)}
+    </div>`
+    : "";
+  return `<p class="status status-beta">${icons.flask}<span>${LINUX_BETA_NOTE}</span></p>
+    <ol class="steps">
+      ${installStep}
+      <li><p>Khởi động lại IBus:</p>${codeLine("ibus restart")}</li>
+      <li><p>Mở <strong>Settings → Keyboard → Input Sources</strong>, bấm <strong>+</strong> rồi thêm <strong>Vietnamese (oh-key)</strong>. Trên KDE và các môi trường khác, thêm nó trong <strong class="nowrap">ibus-setup</strong>.</p></li>
+      <li><p>Nhấn <kbd>Ctrl</kbd> + <kbd>Shift</kbd> hoặc <kbd>Alt</kbd> + <kbd>Z</kbd> để đổi V và E.</p></li>
+    </ol>
+    ${tarballAlternative}`;
+}
+
 function fileRow(name, detail, url) {
   return `<li><a href="${escapeHtml(url)}">${icons.download}<span class="file-name">${escapeHtml(name)}</span></a><span class="file-detail">${escapeHtml(detail)}</span></li>`;
 }
@@ -120,6 +171,13 @@ function allFiles(release) {
     windowsRows.push(fileRow(`oh-key-windows-${zip.architecture}.zip`, ARCHITECTURE_DETAILS[zip.architecture], zip.url));
   }
   const macRows = release.macosZip ? [fileRow("oh-key-macos.zip", "Apple Silicon và Intel", release.macosZip)] : [];
+  const linuxRows = [];
+  if (release.linuxDeb) {
+    linuxRows.push(fileRow(release.linuxDeb.name, "Ubuntu, Debian · x86_64", release.linuxDeb.url));
+  }
+  if (release.linuxTarball) {
+    linuxRows.push(fileRow(LINUX_TARBALL_NAME, "Mọi bản Linux có IBus · x86_64", release.linuxTarball));
+  }
   const otherRows = [];
   if (release.sourceZip) {
     otherRows.push(fileRow("oh-key-source.zip", "Mã nguồn đúng bản này, GPL-3.0", release.sourceZip));
@@ -128,13 +186,15 @@ function allFiles(release) {
   return `<div class="file-groups">
       <div class="file-group"><h3>${icons.windows}Windows</h3><ul>${windowsRows.join("")}</ul></div>
       ${macRows.length ? `<div class="file-group"><h3>${icons.apple}macOS</h3><ul>${macRows.join("")}</ul></div>` : ""}
+      ${linuxRows.length ? `<div class="file-group"><h3>${icons.linux}Linux</h3><ul>${linuxRows.join("")}</ul></div>` : ""}
       <div class="file-group"><h3>${icons.archive}Khác</h3><ul>${otherRows.join("")}</ul></div>
     </div>
-    <p class="status status-off">${icons.ban}<span>Chưa có bản cho Linux.</span></p>`;
+    ${linuxRows.length ? "" : `<p class="status status-off">${icons.ban}<span>Bản này chưa có file cho Linux.</span></p>`}`;
 }
 
 export function renderPage({ release, platform }) {
-  const installTab = platform === "macos" ? "macos" : "windows";
+  const leading = leadingPlatform(platform, release);
+  const installTab = leading === "macos" || leading === "linux" ? leading : "windows";
   const versionLine = release
     ? `<a class="version" href="${escapeHtml(release.pageUrl)}">Bản ${escapeHtml(release.version)}</a>`
     : "";
@@ -144,9 +204,9 @@ export function renderPage({ release, platform }) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>oh-key · Bộ gõ tiếng Việt</title>
-<meta name="description" content="oh-key: bộ gõ tiếng Việt viết bằng Rust, nhanh, nhẹ, ít lỗi hơn Unikey. Tải miễn phí cho Windows và macOS.">
+<meta name="description" content="oh-key: bộ gõ tiếng Việt viết bằng Rust, nhanh, nhẹ, ít lỗi hơn Unikey. Tải miễn phí cho Windows, macOS và Linux.">
 <meta property="og:title" content="oh-key · Bộ gõ tiếng Việt">
-<meta property="og:description" content="Bộ gõ tiếng Việt nhanh, nhẹ, ít lỗi. Tải cho Windows và macOS.">
+<meta property="og:description" content="Bộ gõ tiếng Việt nhanh, nhẹ, ít lỗi. Tải cho Windows, macOS và Linux.">
 <meta property="og:url" content="https://ohkey.codepawl.com/">
 <meta name="theme-color" content="#1f1e1d">
 <link rel="icon" href="data:image/svg+xml,${encodeURIComponent(icons.favicon)}">
@@ -165,11 +225,11 @@ export function renderPage({ release, platform }) {
     <div class="hero-copy">
       <h1>Bộ gõ tiếng Việt nhanh, nhẹ, ít lỗi.</h1>
       <p class="lead">Gõ Telex hay VNI trong mọi ứng dụng. Từ tiếng Anh như <span class="mono">check</span> hay <span class="mono">email</span> vẫn giữ nguyên. Viết bằng Rust, miễn phí, mã nguồn mở.</p>
-      ${platformNotice(platform)}
+      ${platformNotice(platform, release)}
       <div class="download">
-        ${primaryButton(platform, release)}
+        ${primaryButton(leading, release)}
       </div>
-      <div class="meta">${otherPlatformLink(platform)}${versionLine}</div>
+      <div class="meta">${otherPlatformLinks(leading, release)}${versionLine}</div>
     </div>
     <figure class="demo" aria-label="Gõ Telex thành tiếng Việt">
       <div class="field"><span class="typed" data-final="${escapeHtml(DEMO_FRAMES[DEMO_FRAMES.length - 1])}">${escapeHtml(DEMO_FRAMES[DEMO_FRAMES.length - 1])}</span><span class="caret"></span></div>
@@ -183,10 +243,12 @@ export function renderPage({ release, platform }) {
       <div class="tabs" role="tablist">
         <button type="button" role="tab" data-tab="windows" aria-selected="${installTab === "windows"}">${icons.windows}Windows</button>
         <button type="button" role="tab" data-tab="macos" aria-selected="${installTab === "macos"}">${icons.apple}macOS</button>
+        <button type="button" role="tab" data-tab="linux" aria-selected="${installTab === "linux"}">${icons.linux}Linux</button>
       </div>
     </div>
     <div class="tab-panel" data-panel="windows" ${installTab === "windows" ? "" : "hidden"}>${windowsSteps(release)}</div>
     <div class="tab-panel" data-panel="macos" ${installTab === "macos" ? "" : "hidden"}>${macosSteps()}</div>
+    <div class="tab-panel" data-panel="linux" ${installTab === "linux" ? "" : "hidden"}>${linuxSteps(release)}</div>
   </section>
 
   <section class="files" id="tat-ca">
@@ -411,7 +473,7 @@ kbd { font-size: 0.85em; background: var(--surface-strong); border-radius: 6px; 
 .alternative p { margin: 0 0 10px; color: var(--text-dim); }
 
 .file-groups { display: grid; gap: 28px; margin-bottom: 24px; }
-@media (min-width: 880px) { .file-groups { grid-template-columns: 1.3fr 1fr 1fr; gap: 32px; } }
+@media (min-width: 880px) { .file-groups { grid-template-columns: 1.2fr 1fr 1.2fr 1fr; gap: 28px; } }
 .file-group h3 { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 600; margin: 0 0 12px; }
 .file-group h3 svg { width: 18px; height: 18px; }
 .file-group ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }

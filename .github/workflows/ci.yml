@@ -196,3 +196,32 @@ jobs:
             Write-Host "::warning title=negative control::exit $code, the load did not break the old logic here"
           }
           exit 0
+
+  linux:
+    # The Linux IBus engine: Rust key handling linked into C glue, packed as a tarball and a deb.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: linux
+      - name: Install the IBus development files
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libibus-1.0-dev pkg-config
+      - name: Test the key handling
+        run: cargo test -p oh-key-ibus --locked
+      - name: Build the engine and the packages
+        run: bash linux/package.sh
+      - name: Check the packages
+        run: |
+          target/linux/ibus-engine-oh-key --version
+          dpkg-deb --info target/linux/oh-key_*_amd64.deb
+          dpkg-deb --contents target/linux/oh-key_*_amd64.deb | grep -E 'libexec/ibus-engine-oh-key|component/oh-key.xml'
+          tar -tzf target/linux/oh-key-linux-x86_64.tar.gz | grep -E 'install.sh|ibus-engine-oh-key'
+          grep -q '<exec>/usr/libexec/ibus-engine-oh-key --ibus</exec>' target/linux/deb/usr/share/ibus/component/oh-key.xml
+      - uses: actions/upload-artifact@v4
+        with:
+          name: oh-key-linux
+          path: |
+            target/linux/oh-key-linux-x86_64.tar.gz
+            target/linux/oh-key_*_amd64.deb

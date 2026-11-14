@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component>
+  <name>org.freedesktop.IBus.OhKey</name>
+  <description>oh-key Vietnamese input</description>
+  <exec>@ENGINE_PATH@ --ibus</exec>
+  <version>@VERSION@</version>
+  <author>codepawl</author>
+  <license>GPL-3.0-or-later</license>
+  <homepage>https://github.com/codepawl/oh-key</homepage>
+  <textdomain>oh-key</textdomain>
+  <engines>
+    <engine>
+      <name>oh-key</name>
+      <language>vi</language>
+      <license>GPL-3.0-or-later</license>
+      <author>codepawl</author>
+      <layout>us</layout>
+      <longname>oh-key</longname>
+      <description>Vietnamese typing (Telex, VNI)</description>
+      <rank>0</rank>
+      <symbol>Vi</symbol>
+    </engine>
+  </engines>
+</component>

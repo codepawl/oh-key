@@ -1,0 +1,15 @@
+[package]
+name = "oh-key-ibus"
+description = "Key handling for the oh-key IBus engine on Linux: keys in, commit and preedit out"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "oh_key_ibus"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+oh-key-ffi = { path = "../oh-key-ffi" }
+oh-key-ipc = { path = "../oh-key-ipc" }

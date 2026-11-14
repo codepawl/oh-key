@@ -40,6 +40,7 @@ export function describeRelease(tag, fileNames) {
   const downloadBase = `${RELEASES_URL}/download/${tag}`;
   const hasFile = (name) => fileNames.includes(name);
   const fileUrl = (name) => (hasFile(name) ? `${downloadBase}/${name}` : null);
+  const debName = fileNames.find((name) => /^oh-key_.+_amd64\.deb$/.test(name));
   return {
     tag,
     version: tag.replace(/^v/, ""),
@@ -49,18 +50,24 @@ export function describeRelease(tag, fileNames) {
       .map((architecture) => ({ architecture, url: fileUrl(`oh-key-windows-${architecture}.zip`) }))
       .filter((zip) => zip.url),
     macosZip: fileUrl("oh-key-macos.zip"),
+    linuxDeb: debName ? { name: debName, url: fileUrl(debName) } : null,
+    linuxTarball: fileUrl("oh-key-linux-x86_64.tar.gz"),
     sourceZip: fileUrl("oh-key-source.zip"),
     checksums: `${downloadBase}/SHA256SUMS.txt`,
   };
 }
 
-// Where /download/<platform> sends people: the installer when the release has one.
+// Where /download/<platform> sends people: the installer when the release has one (on Linux the
+// .deb, else the tarball). Releases from before the Linux build fall back to the release page.
 export function downloadTarget(release, platform) {
   if (platform === "windows") {
     return release.windowsSetup || release.windowsZips[0]?.url || release.pageUrl;
   }
   if (platform === "macos") {
     return release.macosZip || release.pageUrl;
+  }
+  if (platform === "linux") {
+    return release.linuxDeb?.url || release.linuxTarball || release.pageUrl;
   }
   return release.pageUrl;
 }

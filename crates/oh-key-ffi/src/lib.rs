@@ -7,7 +7,7 @@
 //!
 //! The settings use the `config.toml` text of the Windows app, so one file format serves both.
 
-mod session;
+pub mod session;
 
 use std::ffi::c_char;
 use std::slice;

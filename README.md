@@ -1,6 +1,6 @@
 # oh-key
 
-A Vietnamese typing app written in Rust, in the Unikey style: fast, small and with fewer bugs. It runs on Windows as a tray app and on macOS as an input method.
+A Vietnamese typing app written in Rust, in the Unikey style: fast, small and with fewer bugs. It runs on Windows as a tray app and on macOS as an input method and on Linux as an IBus engine.
 
 Bộ gõ tiếng Việt viết bằng Rust: nhanh, nhẹ, ít lỗi hơn Unikey.
 
@@ -41,6 +41,26 @@ The build is signed ad hoc and not notarized.
 5. Open System Settings > Keyboard > Input Sources and add oh-key under Vietnamese.
 
 Settings live in `~/Library/Application Support/oh-key/config.toml`, the same format as on Windows. The mode switches with Ctrl+Shift or Option+Z.
+
+### Linux (IBus)
+
+Cài đặt trên Linux (IBus, mặc định của GNOME; cũng chạy trên KDE và các môi trường khác qua IBus):
+
+1. Tải `oh-key-linux-x86_64.tar.gz` hoặc `oh-key_<phiên bản>_amd64.deb` từ [bản phát hành mới nhất](https://github.com/codepawl/oh-key-releases/releases/latest).
+2. Bản `.deb`: `sudo apt install ./oh-key_<phiên bản>_amd64.deb`. Bản tar: `tar xzf oh-key-linux-x86_64.tar.gz && cd oh-key-linux-x86_64 && sudo ./install.sh`.
+3. Chạy `ibus restart`.
+4. Mở Settings > Keyboard > Input Sources, thêm Vietnamese (oh-key).
+
+Cấu hình nằm ở `$XDG_CONFIG_HOME/oh-key/config.toml` (mặc định `~/.config/oh-key/config.toml`) và `macros.txt` cùng thư mục, cùng định dạng như trên Windows. Sửa file là có hiệu lực ở lần chuyển ô nhập kế tiếp, không cần khởi động lại. Bật/tắt tiếng Việt bằng Ctrl+Shift hoặc Alt+Z (theo `toggle_hotkey`), hoặc phím chuyển nguồn nhập của IBus (Super+Space). Gỡ cài đặt: `sudo apt remove oh-key` hoặc `sudo ./uninstall.sh`.
+
+Install on Linux (IBus, the GNOME default; it also works on KDE and other desktops through IBus):
+
+1. Download `oh-key-linux-x86_64.tar.gz` or `oh-key_<version>_amd64.deb` from the [latest release](https://github.com/codepawl/oh-key-releases/releases/latest).
+2. For the `.deb`: `sudo apt install ./oh-key_<version>_amd64.deb`. For the tarball: `tar xzf oh-key-linux-x86_64.tar.gz && cd oh-key-linux-x86_64 && sudo ./install.sh`.
+3. Run `ibus restart`.
+4. Open Settings > Keyboard > Input Sources and add Vietnamese (oh-key).
+
+Settings live in `$XDG_CONFIG_HOME/oh-key/config.toml` (default `~/.config/oh-key/config.toml`) with `macros.txt` beside it, the same format as on Windows. An edited file applies the next time a text field gets focus. Ctrl+Shift or Alt+Z (the `toggle_hotkey` setting) switches Vietnamese and English, as does IBus's own input source switch (Super+Space). Uninstall with `sudo apt remove oh-key` or `sudo ./uninstall.sh`. To build it yourself, install `libibus-1.0-dev` and `pkg-config`, then run `bash linux/package.sh`. The word being typed sits in the underlined preedit, so it works in GTK, Qt, browsers and terminals; the excluded apps list does not apply because IBus does not tell the engine which program has focus.
 
 ## Numbers
 
@@ -139,6 +159,7 @@ On macOS, an InputMethodKit controller written in Swift (`macos/`) calls the sam
 | `oh-key-ipc` | Settings format and shared state |
 | `oh-key-app` | Windows tray app and keyboard hook |
 | `oh-key-ffi` | C API for the macOS frontend |
+| `oh-key-ibus` | Key handling of the Linux IBus engine (C glue in `linux/ibus`) |
 | `oh-key-cli` | `oh-key-cli type <keys>` shows what the engine makes of a key sequence |
 
 ## Build
@@ -165,7 +186,7 @@ To redraw the demo, run `uv run --no-project python tools/demo/make_demo.py`. It
 ## Roadmap
 
 - Try the macOS input method in real apps.
-- Linux frontends for fcitx5 and ibus.
+- Try the Linux IBus engine in real desktops; an fcitx5 addon.
 
 ## Licence
 
