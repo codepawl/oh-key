@@ -1143,6 +1143,13 @@ fn read_macros(macro_enabled: bool) -> Vec<(String, String)> {
 
 /// Lower case file name of the executable that runs process `process_id`.
 pub fn process_exe_name(process_id: u32) -> Option<String> {
+    let path = process_image_path(process_id)?;
+    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
+    Some(file_name.to_lowercase())
+}
+
+/// Full path of the executable that runs process `process_id`, as Windows spells it.
+pub fn process_image_path(process_id: u32) -> Option<String> {
     let process = unsafe {
         Owned::new(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?)
     };
@@ -1157,9 +1164,7 @@ pub fn process_exe_name(process_id: u32) -> Option<String> {
         )
         .ok()?;
     }
-    let path = String::from_utf16_lossy(&buffer[..length as usize]);
-    let file_name = path.rsplit(['\\', '/']).next().unwrap_or(&path);
-    Some(file_name.to_lowercase())
+    Some(String::from_utf16_lossy(&buffer[..length as usize]))
 }
 
 pub fn window_exe_name(window: HWND) -> Option<String> {
