@@ -3,6 +3,7 @@
 //   /                    the page, leading with the visitor's OS
 //   /download/windows    the Windows installer of the latest release
 //   /download/macos      the macOS zip of the latest release
+//   /download/linux      the Linux .deb (or tarball) of the latest release
 //   /install.ps1         the PowerShell install script from the releases repo
 
 import { detectPlatform, downloadTarget, fetchLatestRelease, PUBLIC_REPOSITORY } from "./release.js";
@@ -21,7 +22,7 @@ export default {
     if (url.pathname === "/install.ps1") {
       return serveInstallScript();
     }
-    const downloadMatch = url.pathname.match(/^\/download\/(windows|macos)\/?$/);
+    const downloadMatch = url.pathname.match(/^\/download\/(windows|macos|linux)\/?$/);
     if (downloadMatch) {
       const release = await cachedLatestRelease(context);
       const fallback = `https://github.com/${PUBLIC_REPOSITORY}/releases/latest`;

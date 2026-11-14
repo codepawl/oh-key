@@ -4,11 +4,17 @@ import { describeRelease, detectPlatform, downloadTarget, fetchLatestRelease, pa
 import { renderPage } from "../src/page.js";
 
 const HASH = "a".repeat(64);
+const LINUX_FILES = ["oh-key-linux-x86_64.tar.gz", "oh-key_0.2.0_amd64.deb"];
 const SUMS_WITH_SETUP = [
   "oh-key-windows-arm64.exe", "oh-key-windows-arm64.zip", "oh-key-windows-x64.exe",
   "oh-key-windows-x64.zip", "oh-key-windows-x86.exe", "oh-key-windows-x86.zip",
   "oh-key-source.zip", "oh-key-macos.zip", "oh-key-setup.exe",
 ].map((name) => `${HASH}  ${name}`).join("\n");
+
+function releaseWithLinux() {
+  const sums = [SUMS_WITH_SETUP, ...LINUX_FILES.map((name) => `${HASH}  ${name}`)].join("\n");
+  return describeRelease("v0.2.0", parseChecksumFileNames(sums));
+}
 
 function fakeFetch(location, sumsText) {
   return async (url) => {
@@ -67,8 +73,50 @@ test("the page leads with the visitor's platform and lists every file", () => {
   }
 });
 
+test("Linux files are matched by pattern and /download/linux prefers the deb", () => {
+  const base = "https://github.com/codepawl/oh-key-releases/releases/download/v0.2.0";
+  const release = describeRelease("v0.2.0", [...LINUX_FILES, "oh-key-macos.zip"]);
+  assert.equal(release.linuxDeb.name, "oh-key_0.2.0_amd64.deb");
+  assert.equal(release.linuxDeb.url, `${base}/oh-key_0.2.0_amd64.deb`);
+  assert.equal(release.linuxTarball, `${base}/oh-key-linux-x86_64.tar.gz`);
+  assert.equal(downloadTarget(release, "linux"), release.linuxDeb.url);
+  const tarballOnly = describeRelease("v0.2.0", ["oh-key-linux-x86_64.tar.gz"]);
+  assert.equal(tarballOnly.linuxDeb, null);
+  assert.equal(downloadTarget(tarballOnly, "linux"), release.linuxTarball);
+});
+
+test("a release without Linux files sends /download/linux to the release page", () => {
+  const release = describeRelease("v0.1.0", ["oh-key-windows-x64.zip", "oh-key_0.1.0_arm64.deb"]);
+  assert.equal(release.linuxDeb, null);
+  assert.equal(release.linuxTarball, null);
+  assert.equal(downloadTarget(release, "linux"), release.pageUrl);
+});
+
+test("a Linux visitor gets the Linux download when the release has it", () => {
+  const release = releaseWithLinux();
+  const page = renderPage({ release, platform: "linux" });
+  assert.match(page, /class="primary" href="\/download\/linux"/);
+  assert.match(page, /oh-key_0\.2\.0_amd64\.deb · Ubuntu, Debian · x86_64/);
+  assert.match(page, /sudo apt install \.\/oh-key_0\.2\.0_amd64\.deb/);
+  assert.match(page, /ibus restart/);
+  assert.match(page, /data-tab="linux" aria-selected="true"/);
+  assert.match(page, /thử nghiệm/);
+  assert.doesNotMatch(page, /chưa có file cho Linux/);
+  const windowsPage = renderPage({ release, platform: "windows" });
+  assert.match(windowsPage, /class="other-platform" href="\/download\/linux"/);
+});
+
+test("a Linux visitor falls back to Windows when the release has no Linux files", () => {
+  const release = describeRelease("v0.1.0", ["oh-key-windows-x64.zip", "oh-key-macos.zip"]);
+  const page = renderPage({ release, platform: "linux" });
+  assert.match(page, /class="primary" href="\/download\/windows"/);
+  assert.match(page, /chưa có file cho Linux/);
+  assert.doesNotMatch(page, /href="\/download\/linux"/);
+});
+
 test("the page still renders when GitHub is unreachable", () => {
   const page = renderPage({ release: null, platform: "linux" });
-  assert.match(page, /Chưa có bản cho Linux/);
+  assert.match(page, /class="primary" href="\/download\/windows"/);
   assert.match(page, /releases\/latest/);
+  assert.doesNotMatch(page, /href="\/download\/linux"/);
 });
