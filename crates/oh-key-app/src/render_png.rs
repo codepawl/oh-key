@@ -28,9 +28,10 @@ pub fn render(graphics: &Graphics, window: &str, path: &Path) -> Result<()> {
         "macros" => macros_window::render_png(graphics, path),
         "converter" => converter_window::render_png(graphics, path),
         "mode-flash" => mode_flash::render_frames(graphics, path),
+        "logo" => crate::logo::render_pngs(graphics, path),
         _ => Err(windows::core::Error::new(
             windows::Win32::Foundation::E_INVALIDARG,
-            "window must be settings, settings-dropdown, settings-focus, excluded-apps, macros, converter, mode-flash or tray-menu-preview",
+            "window must be settings, settings-dropdown, settings-focus, excluded-apps, macros, converter, mode-flash, logo or tray-menu-preview",
         )),
     }
 }

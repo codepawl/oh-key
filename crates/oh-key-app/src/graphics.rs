@@ -113,8 +113,6 @@ pub struct Graphics {
     font_loader: IDWriteInMemoryFontFileLoader,
     font_factory: IDWriteFactory5,
     label_format: IDWriteTextFormat,
-    /// Centred in its box; draws the ✻ mark.
-    spark_format: IDWriteTextFormat,
     /// Segoe Fluent Icons on Windows 11, Segoe MDL2 Assets on Windows 10.
     icon_format: IDWriteTextFormat,
     _live: LiveGraphicsGuard,
@@ -145,15 +143,12 @@ impl Graphics {
             };
             label_format.SetTrimming(&trimming, &ellipsis)?;
         }
-        let spark_format = create_format(&dwrite, None, "Segoe UI Symbol", style::SPARK_SIZE)?;
         let icon_family = pick_system_family(&dwrite, &["Segoe Fluent Icons", "Segoe MDL2 Assets"])
             .unwrap_or("Segoe MDL2 Assets");
         let icon_format = create_format(&dwrite, None, icon_family, style::ICON_SIZE)?;
-        for format in [&spark_format, &icon_format] {
-            unsafe {
-                format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
-                format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
-            }
+        unsafe {
+            icon_format.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER)?;
+            icon_format.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER)?;
         }
         Ok(Self {
             d2d,
@@ -162,7 +157,6 @@ impl Graphics {
             font_loader,
             font_factory: factory,
             label_format,
-            spark_format,
             icon_format,
             _live: LiveGraphicsGuard::new(),
         })
@@ -211,20 +205,6 @@ impl Graphics {
             target.DrawText(
                 utf16,
                 &self.icon_format,
-                &area.into(),
-                brush,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            );
-        }
-    }
-
-    pub fn draw_spark(&self, target: &ID2D1RenderTarget, area: Rect, brush: &ID2D1SolidColorBrush) {
-        let utf16: Vec<u16> = style::SPARK.encode_utf16().collect();
-        unsafe {
-            target.DrawText(
-                &utf16,
-                &self.spark_format,
                 &area.into(),
                 brush,
                 D2D1_DRAW_TEXT_OPTIONS_NONE,

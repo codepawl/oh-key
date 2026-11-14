@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ohkey-download",
+  "main": "src/worker.js",
+  "account_id": "db6d5e9c21ca2c945ffc837d011f6c6c",
+  "compatibility_date": "2026-10-08",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "routes": [
+    { "pattern": "ohkey.codepawl.com", "custom_domain": true }
+  ]
+}

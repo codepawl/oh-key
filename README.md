@@ -16,12 +16,14 @@ Early. The engine, charset conversion and the Windows app are in place. The macO
 
 ## Install
 
+Download it from [ohkey.codepawl.com](https://ohkey.codepawl.com), which always offers the latest release for your system.
+
 ### Windows
 
-Run this in PowerShell:
+Run `oh-key-setup.exe` (in every release after 0.1.0): one installer for x64, x86 and arm64, per user, no administrator rights. Or run this in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/codepawl/oh-key-releases/main/install.ps1 | iex
+irm https://ohkey.codepawl.com/install.ps1 | iex
 ```
 
 The script downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. From then on the app starts at every sign-in; turn off "Khởi động cùng Windows" in its panel to stop that. `oh-key-cli.exe` is in the release zip.

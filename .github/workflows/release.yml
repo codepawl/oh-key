@@ -3,6 +3,13 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A dry run: every package is built and the installer is tried, nothing is published.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - installer/**
+      - macos/**
+  workflow_dispatch:
 
 # Read-only by default: the build jobs run third-party actions. Only the publish jobs write.
 permissions:
@@ -31,7 +38,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Check that the tag matches the version in Cargo.toml
-        if: matrix.arch == 'x64'
+        if: matrix.arch == 'x64' && github.ref_type == 'tag'
         shell: bash
         run: |
           workspace_version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
@@ -40,18 +47,19 @@ jobs:
             exit 1
           fi
       - name: Test the pure crates and the app
-        if: matrix.arch == 'x64'
+        if: matrix.arch == 'x64' && github.ref_type == 'tag'
         run: cargo test --workspace --release --locked
       - name: Build the app and the command line tool
         run: cargo build -p oh-key-app -p oh-key-cli --release --locked --target ${{ matrix.target }}
       - name: Smoke test the x64 build
-        # --version must print "oh-key <tag without v>". crash-test must die on purpose: a non-zero
-        # exit proves the crash path runs. Its exit code is not pinned (the app lane owns it).
+        # --version must print "oh-key <Cargo.toml version>", which on a tag was checked against the
+        # tag above. crash-test must die on purpose: a non-zero exit proves the crash path runs. Its
+        # exit code is not pinned (the app lane owns it).
         if: matrix.arch == 'x64'
         shell: bash
         run: |
           exe="target/${{ matrix.target }}/release/oh-key.exe"
-          expected_version="${GITHUB_REF_NAME#v}"
+          expected_version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
           version_output="$(timeout 30 "$exe" --version)"
           echo "oh-key --version printed: $version_output"
           if [ "$version_output" != "oh-key $expected_version" ]; then
@@ -137,9 +145,64 @@ jobs:
             oh-key-windows-*.exe
           if-no-files-found: error
 
+  installer:
+    # oh-key-setup.exe, the one-click installer for every Windows (installer/oh-key.iss). It is
+    # installed, run and uninstalled here once, silently, before anyone can download it.
+    needs: build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: build-*
+          path: builds
+      - name: Build oh-key-setup.exe
+        shell: pwsh
+        run: |
+          $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $compiler)) {
+            choco install innosetup --yes --no-progress
+            if ($LASTEXITCODE -ne 0) { throw 'Could not install Inno Setup.' }
+          }
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          & $compiler "/DAppVersion=$version" "/DBuildFolder=$PWD\builds" installer\oh-key.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with exit code $LASTEXITCODE." }
+      - name: Install, run and uninstall it silently
+        shell: pwsh
+        run: |
+          $setup = Start-Process installer\output\oh-key-setup.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup exited with $($setup.ExitCode)." }
+          $folder = Join-Path $env:LOCALAPPDATA 'Programs\oh-key'
+          $installed = Join-Path $folder 'oh-key.exe'
+          if (-not (Test-Path $installed)) { throw "Setup did not install $installed." }
+          # oh-key.exe is a GUI program: PowerShell neither waits for it nor reads its output
+          # unless it goes through Start-Process.
+          $versionFile = Join-Path $env:RUNNER_TEMP 'installed-version.txt'
+          Start-Process $installed -ArgumentList '--version' -Wait -NoNewWindow -RedirectStandardOutput $versionFile
+          [string]$printed = (Get-Content $versionFile -Raw).Trim()
+          $expected = 'oh-key ' + (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          Write-Host "installed oh-key --version printed: $printed"
+          if ($printed -ne $expected) { throw "--version printed '$printed', expected '$expected'." }
+          $runValue = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'oh-key').'oh-key'
+          if ($runValue -ne "`"$installed`"") { throw "Run value is $runValue." }
+          $uninstall = Start-Process (Join-Path $folder 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall exited with $($uninstall.ExitCode)." }
+          # The uninstaller removes itself from a copy in Temp just after it returns.
+          Start-Sleep -Seconds 5
+          if (Test-Path $installed) { throw 'Uninstall left oh-key.exe behind.' }
+          if (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'oh-key' -ErrorAction SilentlyContinue) { throw 'Uninstall left the Run value.' }
+          Write-Host 'Install and uninstall passed.'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: oh-key-setup
+          path: installer/output/oh-key-setup.exe
+          if-no-files-found: error
+
   publish:
     # The private repository's own release, with notes generated from its pull requests.
-    needs: [package, source]
+    # A failed installer build does not block the zips and exes.
+    needs: [package, source, installer]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.package.result == 'success' && needs.source.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -151,13 +214,18 @@ jobs:
           name: oh-key-windows-assets
           path: dist
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: oh-key-setup
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: oh-key-source
           path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum oh-key-windows-* oh-key-source.zip | tee SHA256SUMS.txt
+          sha256sum oh-key-windows-* oh-key-source.zip $(ls oh-key-setup.exe 2>/dev/null) | tee SHA256SUMS.txt
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -170,6 +238,7 @@ jobs:
   publish-macos:
     # Attached after the Windows release exists, so a failed macOS build never blocks it.
     needs: [publish, macos]
+    if: ${{ github.ref_type == 'tag' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -193,10 +262,10 @@ jobs:
   publish-public:
     # The public releases repo gets one complete release in one step: every file and one
     # SHA256SUMS.txt, so the updater never sees a half-filled release or a missing list. A failed
-    # macOS build does not block the Windows files.
+    # macOS or Linux build or installer does not block the Windows files.
     # Never without the source zip: binaries alone would break the GPL.
-    needs: [package, macos, source]
-    if: ${{ !cancelled() && needs.package.result == 'success' && needs.source.result == 'success' }}
+    needs: [package, macos, linux, source, installer]
+    if: ${{ !cancelled() && github.ref_type == 'tag' && needs.package.result == 'success' && needs.source.result == 'success' }}
     runs-on: ubuntu-latest
     # Keep RELEASES_TOKEN in this environment's secrets and give the environment required reviewers
     # and a tag rule, so a branch with a changed workflow cannot read the token.
@@ -217,13 +286,23 @@ jobs:
           name: oh-key-macos-zip
           path: dist
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: oh-key-linux-packages
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        continue-on-error: true
+        with:
+          name: oh-key-setup
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: oh-key-source
           path: dist
       - name: Checksums
         run: |
           cd dist
-          sha256sum oh-key-windows-* oh-key-source.zip $(ls oh-key-macos.zip 2>/dev/null) | tee SHA256SUMS.txt
+          sha256sum oh-key-windows-* oh-key-source.zip $(ls oh-key-macos.zip oh-key-linux-x86_64.tar.gz oh-key_*_amd64.deb oh-key-setup.exe 2>/dev/null) | tee SHA256SUMS.txt
       - name: Create the public release
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
@@ -234,10 +313,15 @@ jobs:
           fi
           # Written here, not copied from the private release: its notes name pull requests and people.
           printf 'oh-key %s\n\nBuilt files, their source code (oh-key-source.zip, GPL-3.0-or-later) and SHA256SUMS.txt. The app updates itself from this page.\n' "${TAG#v}" > release-notes.md
+          # A tag like v0.2.0-rc.1 is a pre-release: the download page, install.ps1 and the updater
+          # all follow releases/latest, which skips pre-releases.
+          prerelease_flag=""
+          case "$TAG" in *-*) prerelease_flag="--prerelease" ;; esac
           gh release create "$TAG" dist/* \
             --repo "$PUBLIC_REPO" \
             --title "$TAG" \
-            --notes-file release-notes.md
+            --notes-file release-notes.md \
+            $prerelease_flag
 
   linux:
     # The Linux IBus engine: a tarball with an install script, and a deb.

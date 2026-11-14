@@ -51,6 +51,9 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
+[target.'cfg(windows)'.dependencies]
+windows-numerics = "0.3"
+
 # The example's COM autocomplete source uses the `implement` macro, which names this crate.
 [target.'cfg(windows)'.dev-dependencies]
 windows-core = "0.62"

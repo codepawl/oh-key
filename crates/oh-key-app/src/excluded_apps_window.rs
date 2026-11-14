@@ -41,6 +41,7 @@ use windows::core::{BOOL, Interface, Result, w};
 use crate::graphics::Graphics;
 use crate::hook::{process_exe_name, window_exe_name};
 use crate::layout::{self, Rect};
+use crate::logo;
 use crate::offscreen::Offscreen;
 use crate::{icons, mode_icon, persistence, settings_window, style};
 
@@ -688,14 +689,8 @@ fn draw(
 
 impl Canvas<'_> {
     fn draw_title(&self) {
-        let spark = Rect {
-            left: layout::PADDING - 8.0,
-            top: 18.0,
-            right: layout::PADDING + 22.0,
-            bottom: 54.0,
-        };
-        self.graphics
-            .draw_spark(self.target, spark, &self.brushes.accent);
+        let logo_area = logo::square(layout::PADDING, 36.0, style::LOGO_SIZE);
+        logo::draw(self.target, &self.graphics.d2d, logo_area);
         self.graphics.draw_label(
             self.target,
             TITLE,
