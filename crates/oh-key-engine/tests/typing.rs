@@ -348,7 +348,9 @@ fn a_c_that_only_starts_ich_or_ech_gives_the_word_back() {
         "c waiting for h",
         telex(),
         &[
-            ("misc ", "misc "),
+            ("misc ", "míc "),
+            ("mics ", "míc "),
+            ("tics tawcs ", "tíc tắc "),
             ("disc ", "disc "),
             ("pics ", "pics "),
             ("meecs ", "meecs "),

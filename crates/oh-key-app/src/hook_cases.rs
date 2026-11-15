@@ -134,7 +134,7 @@ pub fn all_cases() -> Vec<Case> {
             "an em {BS}{BS}{BS}{BS}s ",
             "ans ",
         ),
-        case("reedit-english", Plain, "coffee {BS} misc ", "coffee misc "),
+        case("reedit-english", Plain, "coffee {BS} disc ", "coffee disc "),
         case(
             "english-words",
             Plain,
