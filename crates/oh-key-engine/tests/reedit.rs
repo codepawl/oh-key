@@ -171,12 +171,12 @@ fn english_words_still_come_back_as_typed() {
     check_table(
         &[
             ("coffee ", "coffee "),
-            ("misc ", "misc "),
+            ("pics ", "pics "),
             ("coffee <", "coffee"),
             ("coffee < ", "coffee "),
             ("coffee <<", "coffe"),
-            ("misc < ", "misc "),
-            ("misc <<c ", "misc "),
+            ("pics < ", "pics "),
+            ("disc <<c ", "disc "),
             ("text <<t ", "text "),
             ("pass <<s ", "pass "),
             ("disc <, ", "disc, "),
@@ -200,8 +200,8 @@ fn macro_expansions_are_not_resumed() {
 #[test]
 fn space_and_backspace_change_nothing_about_the_next_key() {
     let words = [
-        "viet", "vieet", "vieejt", "nguwowi", "dduong", "tieng", "coffee", "misc", "text", "pass",
-        "disc", "window", "thx", "Vieet", "VIEET",
+        "viet", "vieet", "vieejt", "nguwowi", "dduong", "tieng", "coffee", "misc", "pics", "text",
+        "pass", "disc", "window", "thx", "Vieet", "VIEET",
     ];
     let next_keys = ["s", "f", "j", "z", "w", "d", "aa", "ee", "c", "h", "k"];
     let mut failures = Vec::new();

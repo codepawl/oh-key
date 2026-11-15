@@ -260,10 +260,11 @@ fn telex_double_key_undo() {
             ("boxx", "box"),
             ("tieengss", "tieengss"),
             ("passs", "passs"),
-            ("missa", "missa"),
-            ("lissa", "lissa"),
-            ("Lissabon", "Lissabon"),
-            ("tassa", "tassa"),
+            ("tassk", "task"),
+            ("tassa", "tasa"),
+            // "miss" is on the English list, so the keys after it stay as typed.
+            ("missc", "missc"),
+            ("lesson", "lesson"),
             ("lissf", "lisf"),
         ],
     );
@@ -348,7 +349,9 @@ fn a_c_that_only_starts_ich_or_ech_gives_the_word_back() {
         "c waiting for h",
         telex(),
         &[
-            ("misc ", "misc "),
+            ("misc ", "míc "),
+            ("mics ", "míc "),
+            ("tics tawcs ", "tíc tắc "),
             ("disc ", "disc "),
             ("pics ", "pics "),
             ("meecs ", "meecs "),

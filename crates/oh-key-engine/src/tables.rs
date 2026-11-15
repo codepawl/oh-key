@@ -221,15 +221,15 @@ pub(crate) fn initial_accepts_vowels(initial: &[u8], sequence: &[u8]) -> bool {
     }
 }
 
-/// "c" after i, ê or quy only starts ich, êch or quych: "míc" and "méc" are not words, so a
-/// marked word that stops there is given back as typed ("misc", "disc", "pics"). The one word
-/// that does end there is the interjection híc.
+/// "c" after i, ê or quy only starts ich, êch or quych: "dísc" and "mếc" are not words, so a
+/// marked word that stops there is given back as typed ("disc", "pics"). Three words people
+/// do write this way are kept: the interjection híc, míc (a microphone) and tíc (tíc tắc).
 pub(crate) fn final_waits_for_h(initial: &[u8], sequence: &[u8], final_bit: u8) -> bool {
     if final_bit != FINAL_C {
         return false;
     }
     match sequence {
-        b"i" => initial != b"h",
+        b"i" => !matches!(initial, b"h" | b"m" | b"t"),
         b"E" => true,
         b"y" => initial == b"qu",
         _ => false,
