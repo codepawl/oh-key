@@ -532,8 +532,8 @@ impl Engine {
     }
 
     /// "pass" reaches the engine as "pas" after the second s undoes the tone;
-    /// when the raw keys spell a known English word, or a letter follows the doubled tone key
-    /// ("missa", "lissa"), give the keys back.
+    /// when the raw keys spell a known English word, or a letter follows a z that removed a
+    /// tone ("arizona"), give the keys back.
     fn restore_if_doubled_key_word(&mut self) -> bool {
         let applies =
             self.config.restore_invalid_word && self.config.spell_check && self.key_undone;
@@ -634,8 +634,9 @@ impl Engine {
         }
         if self.word.tone == tone {
             self.word.tone = 0;
+            // As in Unikey, the doubled key stays one letter whatever follows: "tassk" is
+            // "task". Only words on the English list come back with both ("lesson").
             self.undo_with_literal(key);
-            self.tone_undo_key_index = Some(self.raw_keys.len());
             return true;
         }
         let previous_tone = self.word.tone;
