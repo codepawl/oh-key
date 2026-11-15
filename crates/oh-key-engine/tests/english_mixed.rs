@@ -147,3 +147,42 @@ fn ambiguous_english_words_read_as_vietnamese() {
         ],
     );
 }
+
+#[test]
+fn a_mark_key_typed_again_later_gives_the_word_back() {
+    check(
+        "mark key typed again later",
+        &[
+            ("posts", "posts"),
+            ("basis", "basis"),
+            ("horses", "horses"),
+            ("versus", "versus"),
+            ("seemed", "seemed"),
+            ("keeper", "keeper"),
+            ("downward", "downward"),
+            ("Tests", "Tests"),
+            ("arizona", "arizona"),
+            ("isuzu", "isuzu"),
+            ("lorenzo", "lorenzo"),
+            ("daddy", "daddy"),
+            ("cuff", "cuff"),
+            ("puff", "puff"),
+        ],
+    );
+}
+
+#[test]
+fn doubling_a_mark_key_still_undoes_it() {
+    check(
+        "undo idiom",
+        &[
+            ("ass", "as"),
+            ("thiss", "this"),
+            ("rooom", "room"),
+            ("hoafz", "hoa"),
+            ("ddad", "dad"),
+            ("tieengs", "tiếng"),
+            ("vieejtz", "viêt"),
+        ],
+    );
+}

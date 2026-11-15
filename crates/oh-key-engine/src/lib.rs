@@ -102,6 +102,9 @@ pub struct Engine {
     /// Index in `raw_keys` of a tone key pressed twice to type its letter ("miss"): a later
     /// letter means the word is foreign ("missa"), so it is given back as typed.
     tone_undo_key_index: Option<usize>,
+    /// A mark was undone by a key typed apart from the one that set it ("posts", "seemed"):
+    /// nobody undoes a mark that way, so the word is foreign and is given back as typed.
+    undo_apart: bool,
     escape_pending: bool,
     /// Key that produced a fixed letter on the previous press (ww, ]]).
     last_mapped_key: Option<char>,
@@ -140,6 +143,7 @@ impl Engine {
             transformed: false,
             key_undone: false,
             tone_undo_key_index: None,
+            undo_apart: false,
             escape_pending: false,
             last_mapped_key: None,
             after_symbol: false,
@@ -174,6 +178,7 @@ impl Engine {
         self.transformed = false;
         self.key_undone = false;
         self.tone_undo_key_index = None;
+        self.undo_apart = false;
         self.escape_pending = false;
         self.last_mapped_key = None;
         self.after_symbol = false;
@@ -222,6 +227,7 @@ impl Engine {
         self.last_mapped_key = None;
         self.escape_pending = false;
         self.tone_undo_key_index = None;
+        self.undo_apart = false;
         if self.word.letters.is_empty() {
             self.reset();
             return KeyResult::Composing;
@@ -534,7 +540,8 @@ impl Engine {
         if !applies {
             return false;
         }
-        if !self.letter_follows_doubled_tone_key() && !self.raw_keys_are_doubled_key_word() {
+        let foreign = self.undo_apart || self.letter_follows_doubled_tone_key();
+        if !foreign && !self.raw_keys_are_doubled_key_word() {
             return false;
         }
         self.restore_typed_keys();
@@ -598,6 +605,11 @@ impl Engine {
     /// Undoing a mark types the key that asked for it.
     fn undo_with_literal(&mut self, key: char) {
         self.key_undone = true;
+        let follows_same_key = self
+            .raw_keys
+            .last()
+            .is_some_and(|previous| previous.to_lowercase().eq(key.to_lowercase()));
+        self.undo_apart |= !follows_same_key;
         self.word.letters.push(Letter::plain(key));
     }
 
@@ -608,6 +620,12 @@ impl Engine {
         if tone == 0 {
             let had_tone = self.word.tone != 0;
             self.word.tone = 0;
+            if had_tone {
+                // Like a doubled tone key: a letter after it means the z was a letter of a
+                // foreign word ("arizona", "isuzu").
+                self.key_undone = true;
+                self.tone_undo_key_index = Some(self.raw_keys.len());
+            }
             return had_tone;
         }
         let refuses_incomplete = self.config.spell_check && !self.config.free_tone_placement;
@@ -780,7 +798,11 @@ impl Engine {
         }
         if first.mark == Mark::Stroke {
             self.word.letters[0].mark = Mark::None;
+            // A late d undoes đ from anywhere in the word ("ddad" gives "dad"), so it is not
+            // a sign of a foreign word the way a far-off tone or roof key is.
+            let undo_apart_before = self.undo_apart;
             self.undo_with_literal(key);
+            self.undo_apart = undo_apart_before;
             return true;
         }
         if !self.config.free_tone_placement && self.word.letters.len() != 1 {
