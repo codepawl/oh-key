@@ -260,6 +260,11 @@ fn telex_double_key_undo() {
             ("boxx", "box"),
             ("tieengss", "tieengss"),
             ("passs", "passs"),
+            ("missa", "missa"),
+            ("lissa", "lissa"),
+            ("Lissabon", "Lissabon"),
+            ("tassa", "tassa"),
+            ("lissf", "lisf"),
         ],
     );
 }

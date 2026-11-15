@@ -99,6 +99,9 @@ pub struct Engine {
     transformed: bool,
     /// A mark key was pressed twice and its second press typed the letter.
     key_undone: bool,
+    /// Index in `raw_keys` of a tone key pressed twice to type its letter ("miss"): a later
+    /// letter means the word is foreign ("missa"), so it is given back as typed.
+    tone_undo_key_index: Option<usize>,
     escape_pending: bool,
     /// Key that produced a fixed letter on the previous press (ww, ]]).
     last_mapped_key: Option<char>,
@@ -136,6 +139,7 @@ impl Engine {
             frozen: false,
             transformed: false,
             key_undone: false,
+            tone_undo_key_index: None,
             escape_pending: false,
             last_mapped_key: None,
             after_symbol: false,
@@ -169,6 +173,7 @@ impl Engine {
         self.frozen = false;
         self.transformed = false;
         self.key_undone = false;
+        self.tone_undo_key_index = None;
         self.escape_pending = false;
         self.last_mapped_key = None;
         self.after_symbol = false;
@@ -216,6 +221,7 @@ impl Engine {
         }
         self.last_mapped_key = None;
         self.escape_pending = false;
+        self.tone_undo_key_index = None;
         if self.word.letters.is_empty() {
             self.reset();
             return KeyResult::Composing;
@@ -520,15 +526,36 @@ impl Engine {
     }
 
     /// "pass" reaches the engine as "pas" after the second s undoes the tone;
-    /// when the raw keys spell a known English word, give the keys back.
+    /// when the raw keys spell a known English word, or a letter follows the doubled tone key
+    /// ("missa", "lissa"), give the keys back.
     fn restore_if_doubled_key_word(&mut self) -> bool {
         let applies =
             self.config.restore_invalid_word && self.config.spell_check && self.key_undone;
-        if !applies || !self.raw_keys_are_doubled_key_word() {
+        if !applies {
+            return false;
+        }
+        if !self.letter_follows_doubled_tone_key() && !self.raw_keys_are_doubled_key_word() {
             return false;
         }
         self.restore_typed_keys();
         true
+    }
+
+    /// A letter typed after a doubled tone key, other than another tone key: "ss" then "a"
+    /// is a foreign word, while "asss" and "assf" keep undoing and toning as before.
+    fn letter_follows_doubled_tone_key(&self) -> bool {
+        let Some(undo_index) = self.tone_undo_key_index else {
+            return false;
+        };
+        let Some(&last_key) = self.raw_keys.last() else {
+            return false;
+        };
+        let typed_after_undo = self.raw_keys.len() > undo_index + 1;
+        let is_tone_key = matches!(
+            action_for(self.config.input_method, last_key),
+            Action::Tone(_)
+        );
+        typed_after_undo && last_key.is_alphabetic() && !is_tone_key
     }
 
     fn restore_typed_keys(&mut self) {
@@ -590,6 +617,7 @@ impl Engine {
         if self.word.tone == tone {
             self.word.tone = 0;
             self.undo_with_literal(key);
+            self.tone_undo_key_index = Some(self.raw_keys.len());
             return true;
         }
         let previous_tone = self.word.tone;
