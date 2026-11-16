@@ -123,15 +123,17 @@ pub fn strokes_for(edit: &TextEdit) -> Vec<Stroke> {
 /// Typed first when letters are about to be deleted. An address bar selects its inline
 /// suggestion after the caret, and a backspace would delete that selection instead of the
 /// letter. Typing over the selection removes it, and the extra backspace removes this
-/// invisible character again, so the count of backspaces stays right everywhere.
-const ZERO_WIDTH_SPACE: u16 = 0x200B;
+/// character again, so the count of backspaces stays right everywhere. It must be a character
+/// the address bar does not skip when it matches: Chrome ignores U+200B and selects a new
+/// suggestion right after it, so that guard lost a backspace there ("mis" gave "mií").
+const SELECTION_GUARD: u16 = 0x202F;
 
 /// The strokes that really go out: the edit, behind the selection guard when it deletes.
 pub fn strokes_for_sending(edit: &TextEdit) -> Vec<Stroke> {
     if edit.backspaces == 0 {
         return strokes_for(edit);
     }
-    let mut strokes = vec![Stroke::Unit(ZERO_WIDTH_SPACE)];
+    let mut strokes = vec![Stroke::Unit(SELECTION_GUARD)];
     strokes.extend(strokes_for(&TextEdit {
         backspaces: edit.backspaces + 1,
         text: edit.text.clone(),
@@ -2199,7 +2201,7 @@ mod tests {
         assert_eq!(
             strokes,
             [
-                Stroke::Unit(ZERO_WIDTH_SPACE),
+                Stroke::Unit(SELECTION_GUARD),
                 Stroke::Backspace,
                 Stroke::Backspace,
                 Stroke::Unit(0x00EA)

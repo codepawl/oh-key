@@ -27,6 +27,7 @@ const SUITE_EXE: &str = "hook_suite.exe";
 const VK_SPACE: u32 = 0x20;
 const VK_COMMA: u32 = 0xBC;
 const VK_PERIOD: u32 = 0xBE;
+const ZERO_WIDTH_SPACE: char = '\u{200B}';
 
 const SUGGESTIONS: [&str; 7] = [
     "vietnam.example.com",
@@ -65,9 +66,14 @@ impl SimulatedField {
         }
     }
 
+    /// Typing over a selected suggestion makes the address bar suggest again at once, as
+    /// Chrome does, so a guard character it matches through gets a new selection after it.
     fn insert_unit(&mut self, unit: u16) {
-        self.delete_selection();
+        let replaced_a_suggestion = self.delete_selection();
         self.units.push(unit);
+        if replaced_a_suggestion {
+            self.let_suggestion_arrive();
+        }
     }
 
     fn backspace(&mut self) {
@@ -98,7 +104,12 @@ impl SimulatedField {
         if self.control != Control::AddressBar || self.selection_start.is_some() {
             return;
         }
-        let typed = String::from_utf16_lossy(&self.units).to_lowercase();
+        // Chrome skips a zero-width space when it matches what was typed (measured on 156).
+        let typed: String = String::from_utf16_lossy(&self.units)
+            .to_lowercase()
+            .chars()
+            .filter(|character| *character != ZERO_WIDTH_SPACE)
+            .collect();
         if typed.is_empty() {
             return;
         }
@@ -544,6 +555,26 @@ fn the_simulated_address_bar_shows_why_the_selection_guard_exists() {
     hook.run_script(case.keys);
     // The first backspace only deletes the selected suggestion, so the old letter stays.
     assert_eq!(hook.output.field.visible_text(), "vieê");
+}
+
+#[test]
+fn a_zero_width_guard_loses_a_backspace_in_chrome() {
+    let mut field = SimulatedField::new(Control::AddressBar);
+    field.units = "vietnam.example.com".encode_utf16().collect();
+    field.selection_start = Some(2);
+    // The old guard, then the tone edit for "vis": Chrome suggests again after U+200B.
+    field.insert_unit(0x200B);
+    field.backspace();
+    field.backspace();
+    field.insert_unit(0x00ED);
+    assert_eq!(field.visible_text(), "vi\u{ed}");
+}
+
+#[test]
+fn a_tone_after_a_suggestion_replaces_the_letter() {
+    let mut hook = SimulatedHook::new(Control::AddressBar, ToggleHotkey::CtrlShift, Vec::new());
+    hook.run_script("vi{WAIT}s");
+    assert_eq!(hook.output.field.visible_text(), "v\u{ed}");
 }
 
 #[test]
