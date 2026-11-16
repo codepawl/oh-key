@@ -1,4 +1,13 @@
-# oh-key
+<p align="center">
+  <a href="https://codepawl.com">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/codepawl/.github/main/brand/codepawl-lockup-dark.png">
+      <img alt="CodePawl" src="https://raw.githubusercontent.com/codepawl/.github/main/brand/codepawl-lockup.png" width="200">
+    </picture>
+  </a>
+</p>
+
+<h1 align="center">oh-key</h1>
 
 A Vietnamese typing app written in Rust, in the Unikey style: fast, small and with fewer bugs. It runs on Windows as a tray app and on macOS as an input method and on Linux as an IBus engine.
 
@@ -191,3 +200,18 @@ To redraw the demo, run `uv run --no-project python tools/demo/make_demo.py`. It
 ## Licence
 
 GPL-3.0-or-later. See [LICENSE](LICENSE). Parts follow the behaviour of Unikey, which is GPL as well. The credit to its author is in [NOTICE](NOTICE).
+
+<br>
+
+<p align="center">
+  <sub>Made by CodePawl, an independent 3D studio in Vietnam.</sub>
+  <br>
+  <sub>
+    <a href="https://codepawl.com">Website</a> ·
+    <a href="https://x.com/codepawl">X</a> ·
+    <a href="https://github.com/codepawl">GitHub</a> ·
+    <a href="https://huggingface.co/codepawl">Hugging Face</a> ·
+    <a href="https://www.youtube.com/@codepawlhq">YouTube</a> ·
+    <a href="https://www.threads.com/@codepawl">Threads</a>
+  </sub>
+</p>
