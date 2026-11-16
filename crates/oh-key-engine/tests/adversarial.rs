@@ -1127,7 +1127,7 @@ fn double_key_undo_chains() {
             ("ddd", "dd"),
             ("dddd", "ddd"),
             ("ddddd", "dddd"),
-            ("www", "www"),
+            ("www ", "www "),
             ("uww", "uw"),
             ("uwww", "uww"),
             ("ass", "as"),

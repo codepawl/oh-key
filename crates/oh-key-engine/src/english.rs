@@ -299,6 +299,26 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "www",
 ];
 
+/// One letter that may follow a listed word: "passes" is covered by the longer rule, "pass" +
+/// "s", "issue" + "r", "bless" + "y". Any other single letter is a Vietnamese word typed with
+/// a doubled key ("mess" + "a" is "mesa", "miss" + "c" is "misc").
+const SINGLE_LETTER_ENDINGS: &[u8] = b"sdry";
+
+/// A listed word, alone or with more letters after it: two or more letters ("passing",
+/// "difference" after "differ") or one of `SINGLE_LETTER_ENDINGS`. `lowercase_word` must
+/// already be lowercase ASCII.
+pub(crate) fn is_doubled_key_word_form(lowercase_word: &[u8]) -> bool {
+    (1..=lowercase_word.len()).any(|prefix_length| {
+        let (prefix, rest) = lowercase_word.split_at(prefix_length);
+        let ending_fits = match rest {
+            [] => true,
+            [letter] => SINGLE_LETTER_ENDINGS.contains(letter),
+            _ => true,
+        };
+        ending_fits && is_doubled_key_word(prefix)
+    })
+}
+
 /// `lowercase_word` must already be lowercase ASCII.
 pub(crate) fn is_doubled_key_word(lowercase_word: &[u8]) -> bool {
     DOUBLED_KEY_WORDS

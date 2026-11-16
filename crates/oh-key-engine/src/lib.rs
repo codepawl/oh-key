@@ -423,7 +423,7 @@ impl Engine {
     fn finish_word(&mut self) -> String {
         // Room for the boundary key the caller appends, so the text is allocated once.
         let mut text = String::with_capacity(self.preedit.len() + BOUNDARY_ROOM);
-        if self.should_restore_unfinished_word() {
+        if self.should_restore_unfinished_word() || self.should_give_back_english_word() {
             text.extend(self.raw_keys.iter());
         } else {
             text.push_str(&self.preedit);
@@ -540,12 +540,23 @@ impl Engine {
         if !applies {
             return false;
         }
+        // A word on the English list is only given back when it ends (`finish_word`): while
+        // typing, "mess" then "a" is "mesa", the doubled key just taking its mark off.
         let foreign = self.undo_apart || self.letter_follows_doubled_tone_key();
-        if !foreign && !self.raw_keys_are_doubled_key_word() {
+        if !foreign {
             return false;
         }
         self.restore_typed_keys();
         true
+    }
+
+    /// "pass" shows "pas" while typing (the second s undoes the tone); when the word ends
+    /// and its keys are on the English list, they are given back as typed.
+    fn should_give_back_english_word(&self) -> bool {
+        self.config.restore_invalid_word
+            && self.config.spell_check
+            && self.key_undone
+            && self.raw_keys_are_doubled_key_word()
     }
 
     /// A letter typed after a doubled tone key, other than another tone key: "ss" then "a"
@@ -583,7 +594,7 @@ impl Engine {
         for (slot, key) in lowercase.iter_mut().zip(&self.raw_keys) {
             *slot = key.to_ascii_lowercase() as u8;
         }
-        english::is_doubled_key_word(&lowercase[..self.raw_keys.len()])
+        english::is_doubled_key_word_form(&lowercase[..self.raw_keys.len()])
     }
 
     fn apply_action(&mut self, action: Action, key: char, previously_mapped: Option<char>) -> bool {

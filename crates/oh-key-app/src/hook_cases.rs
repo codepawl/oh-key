@@ -222,8 +222,9 @@ pub fn all_cases() -> Vec<Case> {
         case(
             "addr-word-then-suggestion",
             AddressBar,
-            "coffee{WAIT}",
-            "coffee",
+            // The English word comes back whole when it ends, not on the doubled key.
+            "coffee{WAIT} ",
+            "coffee ",
         ),
         case("addr-circumflex-word", AddressBar, "vie{WAIT}etj ", "việt "),
     ]
