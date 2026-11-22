@@ -65,7 +65,6 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "buff",
     "buffalo",
     "buffer",
-    "burr",
     "burrito",
     "business",
     "carriage",
@@ -149,7 +148,9 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "harass",
     "harassment",
     "hassle",
-    "hiss",
+    "hissed",
+    "hisses",
+    "hissing",
     "horror",
     "huff",
     "hurricane",
@@ -196,7 +197,6 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "necessary",
     "occurred",
     "occurrence",
-    "off",
     "offer",
     "offered",
     "offering",
@@ -304,10 +304,20 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
 /// a doubled key ("mess" + "a" is "mesa", "miss" + "c" is "misc").
 const SINGLE_LETTER_ENDINGS: &[u8] = b"sdry";
 
+/// Keys that start like a listed word but are the Telex undo idiom for another English word:
+/// "losser" is "loser" with the tone undone, not "loss" + "er". Sorted for binary search.
+const UNDO_IDIOM_SPELLINGS: &[&str] = &["bossom", "losser", "lossers", "passta"];
+
 /// A listed word, alone or with more letters after it: two or more letters ("passing",
 /// "difference" after "differ") or one of `SINGLE_LETTER_ENDINGS`. `lowercase_word` must
 /// already be lowercase ASCII.
 pub(crate) fn is_doubled_key_word_form(lowercase_word: &[u8]) -> bool {
+    let is_undo_idiom = UNDO_IDIOM_SPELLINGS
+        .binary_search_by(|candidate| candidate.as_bytes().cmp(lowercase_word))
+        .is_ok();
+    if is_undo_idiom {
+        return false;
+    }
     (1..=lowercase_word.len()).any(|prefix_length| {
         let (prefix, rest) = lowercase_word.split_at(prefix_length);
         let ending_fits = match rest {
@@ -328,10 +338,15 @@ pub(crate) fn is_doubled_key_word(lowercase_word: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::DOUBLED_KEY_WORDS;
+    use super::{DOUBLED_KEY_WORDS, UNDO_IDIOM_SPELLINGS};
 
     #[test]
     fn word_list_is_sorted_and_unique() {
         assert!(DOUBLED_KEY_WORDS.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(
+            UNDO_IDIOM_SPELLINGS
+                .windows(2)
+                .all(|pair| pair[0] < pair[1])
+        );
     }
 }
