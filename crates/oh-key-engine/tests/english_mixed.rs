@@ -203,3 +203,26 @@ fn doubled_f_types_of_not_off() {
         ],
     );
 }
+
+/// Common English words that plain Telex turns Vietnamese ("his" is "hí"), typed with the
+/// doubled key the way a person fixes them, give the word, not the doubled keys.
+#[test]
+fn undo_idiom_types_common_english_words() {
+    check(
+        "undo idiom for common words",
+        &[
+            ("hiss ", "his "),
+            ("burrns ", "burns "),
+            ("burrst ", "burst "),
+            ("burry ", "bury "),
+            ("losser ", "loser "),
+            ("lossers ", "losers "),
+            ("passta ", "pasta "),
+            ("bossom ", "bosom "),
+            ("loss ", "loss "),
+            ("pass ", "pass "),
+            ("burrito ", "burrito "),
+            ("hissing ", "hissing "),
+        ],
+    );
+}
