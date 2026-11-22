@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "oh-key-app"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-charset",
  "oh-key-engine",
@@ -17,22 +17,22 @@ dependencies = [
 
 [[package]]
 name = "oh-key-charset"
-version = "0.2.2"
+version = "0.2.3"
 
 [[package]]
 name = "oh-key-cli"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-engine",
 ]
 
 [[package]]
 name = "oh-key-engine"
-version = "0.2.2"
+version = "0.2.3"
 
 [[package]]
 name = "oh-key-ffi"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-engine",
  "oh-key-ipc",
@@ -41,7 +41,7 @@ dependencies = [
 
 [[package]]
 name = "oh-key-ibus"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-ffi",
  "oh-key-ipc",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "oh-key-ipc"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-engine",
  "windows",
@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "oh-key-macro"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "oh-key-charset",
 ]
