@@ -196,7 +196,6 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "necessary",
     "occurred",
     "occurrence",
-    "off",
     "offer",
     "offered",
     "offering",

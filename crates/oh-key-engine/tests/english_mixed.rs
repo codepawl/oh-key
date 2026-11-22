@@ -50,7 +50,7 @@ fn english_words_with_doubled_keys_stay_as_typed() {
             ("successfully", "successfully"),
             ("missing", "missing"),
             ("passion", "passion"),
-            ("OFF", "OFF"),
+            ("OFFF", "OFF"),
             ("BOSS", "BOSS"),
             ("ISSUE", "ISSUE"),
             ("different", "different"),
@@ -183,6 +183,23 @@ fn doubling_a_mark_key_still_undoes_it() {
             ("ddad", "dad"),
             ("tieengs", "tiếng"),
             ("vieejtz", "viêt"),
+        ],
+    );
+}
+
+/// "off" is how Telex types the English "of" (the second f undoes the tone), so it is not
+/// given back as "off" at the end of the word; "offf" types "off", and longer words stay listed.
+#[test]
+fn doubled_f_types_of_not_off() {
+    check(
+        "of through the undo idiom",
+        &[
+            ("off", "of"),
+            ("off ", "of "),
+            ("off the", "of the"),
+            ("offf ", "off "),
+            ("office ", "office "),
+            ("offset ", "offset "),
         ],
     );
 }
