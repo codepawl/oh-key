@@ -260,16 +260,35 @@ fn retyping_the_end_of_a_doubled_letter_word_keeps_both_letters() {
     );
 }
 
-/// A word that ends straight after a backspace stays as it was shown: the backspace took a
-/// letter off the screen, and nothing puts one back.
+/// One letter too many, deleted: the word is the one typed before it.
 #[test]
-fn a_word_ended_right_after_a_backspace_stays_as_shown() {
+fn deleting_an_extra_letter_keeps_both_letters() {
+    check_table(
+        &[
+            ("officee< ", "office "),
+            ("sorryy< ", "sorry "),
+            ("coffeex< ", "coffee "),
+            ("differentm< ", "different "),
+            ("differentlyy<<< ", "different "),
+            ("passt< ", "pass "),
+            ("passwordd<.", "password."),
+            ("pastee< ", "paste "),
+            ("passtee< ", "paste "),
+        ],
+        telex,
+    );
+}
+
+/// A backspace that takes off the letter a third press put back leaves the word as shown;
+/// so does a backspace on the doubled letter itself, and a word picked back up.
+#[test]
+fn a_backspace_on_the_doubled_letter_takes_it_off() {
     check_table(
         &[
             ("passs< ", "pas "),
-            ("passt< ", "pas "),
             ("pass< ", "pa "),
-            ("different< ", "diferen "),
+            ("masssa< ", "mass "),
+            ("masssa<< ", "mas "),
             ("passs<s ", "pass "),
             ("pass<s ", "pá "),
             ("passt<e ", "pase "),
