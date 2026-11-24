@@ -275,3 +275,23 @@ fn words_with_their_own_doubled_letter_still_come_back_as_typed() {
         ],
     );
 }
+
+/// A third press puts the letter back on screen ("pas", then "pass"): the word shown is the
+/// word, not the three keys.
+#[test]
+fn a_third_press_of_the_key_keeps_the_doubled_word_on_screen() {
+    check(
+        "third press",
+        &[
+            ("passs ", "pass "),
+            ("bosss ", "boss "),
+            ("Passs ", "Pass "),
+            ("passses ", "passes "),
+            ("lesss ", "less "),
+            ("bufff ", "buff "),
+            ("pass ", "pass "),
+            ("passes ", "passes "),
+            ("assess ", "assess "),
+        ],
+    );
+}

@@ -88,6 +88,21 @@ fn copy_keys(keys: &[char]) -> ([char; MAX_WORD_LETTERS], usize) {
     (copy, count)
 }
 
+/// Whether these letters, in any case, are an English word kept with its doubled mark key.
+/// Works on the stack: this runs when a word ends.
+fn is_doubled_key_word_form(letters: impl Iterator<Item = char>) -> bool {
+    let mut lowercase = [0u8; LONGEST_ENGLISH_WORD];
+    let mut count = 0;
+    for letter in letters {
+        if count == LONGEST_ENGLISH_WORD || !letter.is_ascii_alphabetic() {
+            return false;
+        }
+        lowercase[count] = letter.to_ascii_lowercase() as u8;
+        count += 1;
+    }
+    english::is_doubled_key_word_form(&lowercase[..count])
+}
+
 pub struct Engine {
     config: Config,
     word: Word,
@@ -557,7 +572,14 @@ impl Engine {
         self.config.restore_invalid_word
             && self.config.spell_check
             && self.key_undone
-            && self.raw_keys_are_doubled_key_word()
+            && is_doubled_key_word_form(self.raw_keys.iter().copied())
+            && !self.shows_doubled_key_word()
+    }
+
+    /// The word on screen already is such a word: the key was pressed a third time to put
+    /// the letter back ("passs" shows "pass"), so the keys hold one letter too many.
+    fn shows_doubled_key_word(&self) -> bool {
+        is_doubled_key_word_form(self.preedit.chars())
     }
 
     /// A letter typed after a doubled tone key, other than another tone key: "ss" then "a"
@@ -583,19 +605,6 @@ impl Engine {
             .letters
             .extend(self.raw_keys.iter().map(|&key| Letter::plain(key)));
         self.word.tone = 0;
-    }
-
-    fn raw_keys_are_doubled_key_word(&self) -> bool {
-        if self.raw_keys.len() > LONGEST_ENGLISH_WORD
-            || !self.raw_keys.iter().all(char::is_ascii_alphabetic)
-        {
-            return false;
-        }
-        let mut lowercase = [0u8; LONGEST_ENGLISH_WORD];
-        for (slot, key) in lowercase.iter_mut().zip(&self.raw_keys) {
-            *slot = key.to_ascii_lowercase() as u8;
-        }
-        english::is_doubled_key_word_form(&lowercase[..self.raw_keys.len()])
     }
 
     fn apply_action(&mut self, action: Action, key: char, previously_mapped: Option<char>) -> bool {
