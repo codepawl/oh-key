@@ -140,6 +140,10 @@ pub struct Engine {
     /// Boundary keys typed since the previous word; 0 when there is no word to pick up.
     boundaries_after_previous_word: u8,
     macros: Vec<(String, String)>,
+    /// The last key was a backspace: a word that ends now is given as it is shown.
+    ended_by_backspace: bool,
+    /// A second engine that types keys on the side, to see what they would show.
+    trial: Option<Box<Engine>>,
 }
 
 impl Default for Engine {
@@ -170,6 +174,8 @@ impl Engine {
             previous_word_after_symbol: false,
             boundaries_after_previous_word: 0,
             macros: Vec::new(),
+            ended_by_backspace: false,
+            trial: None,
         }
     }
 
@@ -201,6 +207,7 @@ impl Engine {
         self.escaped = false;
         self.replay_pending = false;
         self.boundaries_after_previous_word = 0;
+        self.ended_by_backspace = false;
     }
 
     /// Returns the composing word and clears it.
@@ -231,9 +238,12 @@ impl Engine {
             self.step_back_toward_previous_word();
             return KeyResult::PassThrough;
         };
-        let shows_typed_keys = (self.frozen || self.replay_pending)
-            && !self.escaped
-            && self.preedit.chars().eq(self.raw_keys.iter().copied());
+        let shows_all_typed_keys = self.preedit.chars().eq(self.raw_keys.iter().copied());
+        let shows_typed_keys =
+            (self.frozen || self.replay_pending) && !self.escaped && shows_all_typed_keys;
+        let keys_can_be_typed_again =
+            !self.escaped && !shows_all_typed_keys && self.raw_keys.len() <= MAX_WORD_LETTERS;
+        let (typed_keys, typed_count) = copy_keys(&self.raw_keys);
         let deletes_tone_carrier =
             self.word.tone_position(self.config.tone_style) == Some(last_index);
         self.word.letters.pop();
@@ -255,7 +265,30 @@ impl Engine {
         self.raw_keys.extend(self.preedit.chars());
         self.frozen = self.validity() == Validity::Invalid;
         self.replay_pending = shows_typed_keys;
+        if keys_can_be_typed_again && let Some(keys_before_last) = typed_count.checked_sub(1) {
+            self.keep_typed_keys_that_show_the_same(&typed_keys[..keys_before_last]);
+        }
+        self.ended_by_backspace = true;
         KeyResult::Composing
+    }
+
+    /// The backspace has left `preedit` as the text to keep. When the typed keys without
+    /// the last one type exactly that text, the word is rebuilt from them, so a letter that
+    /// a doubled mark key hid is still known when the word ends ("different" shows
+    /// "diferent"; deleting the t and typing it again must not lose the second f).
+    fn keep_typed_keys_that_show_the_same(&mut self, keys: &[char]) {
+        let after_symbol = self.after_symbol;
+        let config = self.config;
+        let mut trial = self
+            .trial
+            .take()
+            .unwrap_or_else(|| Box::new(Engine::new(config)));
+        trial.config = config;
+        let shows_the_same = trial.replay_keys(keys, after_symbol) && trial.preedit == self.preedit;
+        self.trial = Some(trial);
+        if shows_the_same {
+            self.replay_keys(keys, after_symbol);
+        }
     }
 
     pub fn process_key(&mut self, key: char) -> KeyResult {
@@ -291,6 +324,7 @@ impl Engine {
             self.word.letters.push(Letter::plain(key));
         }
         self.raw_keys.push(key);
+        self.ended_by_backspace = false;
         self.after_change();
         KeyResult::Composing
     }
@@ -409,6 +443,7 @@ impl Engine {
         self.word.letters.push(Letter::plain(key));
         self.raw_keys.push(key);
         self.frozen = true;
+        self.ended_by_backspace = false;
         self.restore_if_doubled_key_word();
         self.refresh_preedit();
         KeyResult::Composing
@@ -439,7 +474,9 @@ impl Engine {
     fn finish_word(&mut self) -> String {
         // Room for the boundary key the caller appends, so the text is allocated once.
         let mut text = String::with_capacity(self.preedit.len() + BOUNDARY_ROOM);
-        if self.should_restore_unfinished_word() || self.should_give_back_english_word() {
+        let gives_back_typed_keys = !self.ended_by_backspace
+            && (self.should_restore_unfinished_word() || self.should_give_back_english_word());
+        if gives_back_typed_keys {
             text.extend(self.raw_keys.iter());
         } else {
             text.push_str(&self.preedit);

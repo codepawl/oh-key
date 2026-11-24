@@ -238,3 +238,42 @@ fn finishing_without_a_boundary_key_forgets_the_word() {
     assert_eq!(engine.backspace(), KeyResult::PassThrough);
     assert!(!engine.is_composing());
 }
+
+/// Deleting the end of a word and typing it again keeps the letter the mark key undid:
+/// "different" shows "diferent" until the space.
+#[test]
+fn retyping_the_end_of_a_doubled_letter_word_keeps_both_letters() {
+    check_table(
+        &[
+            ("different<t ", "different "),
+            ("different<<<ence ", "difference "),
+            ("sorry<y ", "sorry "),
+            ("office<e ", "office "),
+            ("coffee<<ee ", "coffee "),
+            ("Different<t.", "Different."),
+            ("DIFFERENT<T ", "DIFFERENT "),
+            ("passwotd<<rd ", "password "),
+            ("differemt<<nt ", "different "),
+            ("passt<<ss ", "pass "),
+        ],
+        telex,
+    );
+}
+
+/// A word that ends straight after a backspace stays as it was shown: the backspace took a
+/// letter off the screen, and nothing puts one back.
+#[test]
+fn a_word_ended_right_after_a_backspace_stays_as_shown() {
+    check_table(
+        &[
+            ("passs< ", "pas "),
+            ("passt< ", "pas "),
+            ("pass< ", "pa "),
+            ("different< ", "diferen "),
+            ("passs<s ", "pass "),
+            ("pass<s ", "pá "),
+            ("passt<e ", "pase "),
+        ],
+        telex,
+    );
+}
