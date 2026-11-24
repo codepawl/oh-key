@@ -170,13 +170,17 @@ pub fn start() {
 unsafe extern "system" fn foreground_changed(
     _hook: HWINEVENTHOOK,
     _event: u32,
-    window: HWND,
+    _window: HWND,
     _object: i32,
     _child: i32,
     _thread: u32,
     _time: u32,
 ) {
-    focus_moved_to(window);
+    // The event only says that the focus moved; the window is asked from Windows. Events
+    // arrive late and out of order: after Alt+Tab the switcher's own event comes some
+    // milliseconds after the event of the window it switched to, and following that one
+    // would take the mode back out of English with the game in front.
+    focus_moved_to(unsafe { GetForegroundWindow() });
 }
 
 fn focus_moved_to(window: HWND) {
