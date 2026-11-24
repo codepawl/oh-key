@@ -247,6 +247,10 @@ fn undo_idiom_in_the_middle_of_a_word_keeps_the_word() {
             ("guessts ", "guests "),
             ("Masster ", "Master "),
             ("BASSIC ", "BASIC "),
+            ("misscalculate ", "miscalculate "),
+            ("passtoral ", "pastoral "),
+            ("passte.", "paste."),
+            ("passte,", "paste,"),
         ],
     );
 }
@@ -272,6 +276,7 @@ fn words_with_their_own_doubled_letter_still_come_back_as_typed() {
             ("riffle ", "riffle "),
             ("basses ", "basses "),
             ("mosses ", "mosses "),
+            ("bassinet ", "bassinet "),
         ],
     );
 }
