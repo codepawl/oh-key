@@ -6,7 +6,8 @@
 //! 50,000 most common English words that way and prints the words that come back as their
 //! keys; a spelling is listed when its word is at least 50 times more common than the
 //! spelling itself, so pairs of two real words ("loss" and "los", "dessert" and "desert")
-//! stay with the doubled letter.
+//! stay with the doubled letter. A spelling that is a word the frequency list happens to
+//! miss ("riffle", "basses", "mosses") is taken out by hand for the same reason.
 
 pub(crate) const UNDO_IDIOM_SPELLINGS: &[&str] = &[
     "barrely",
@@ -22,7 +23,6 @@ pub(crate) const UNDO_IDIOM_SPELLINGS: &[&str] = &[
     "basseman",
     "bassement",
     "bassements",
-    "basses",
     "bassha",
     "basshed",
     "bassher",
@@ -256,7 +256,6 @@ pub(crate) const UNDO_IDIOM_SPELLINGS: &[&str] = &[
     "mossca",
     "mosscow",
     "mosser",
-    "mosses",
     "mossey",
     "mossfilm",
     "mosshe",
@@ -348,9 +347,6 @@ pub(crate) const UNDO_IDIOM_SPELLINGS: &[&str] = &[
     "purrty",
     "purrview",
     "purrvis",
-    "riffle",
-    "riffles",
-    "riffling",
     "sorrely",
     "tossca",
     "tosshi",

@@ -269,6 +269,9 @@ fn words_with_their_own_doubled_letter_still_come_back_as_typed() {
             ("bassist ", "bassist "),
             ("purring ", "purring "),
             ("guessing ", "guessing "),
+            ("riffle ", "riffle "),
+            ("basses ", "basses "),
+            ("mosses ", "mosses "),
         ],
     );
 }
