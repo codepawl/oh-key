@@ -273,6 +273,10 @@ fn a_word_ended_right_after_a_backspace_stays_as_shown() {
             ("passs<s ", "pass "),
             ("pass<s ", "pá "),
             ("passt<e ", "pase "),
+            ("passs< < ", "pas "),
+            ("pass < ", "pass "),
+            ("different < ", "different "),
+            ("different <<t ", "different "),
         ],
         telex,
     );

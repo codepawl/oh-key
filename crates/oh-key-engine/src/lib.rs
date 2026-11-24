@@ -236,6 +236,7 @@ impl Engine {
     pub fn backspace(&mut self) -> KeyResult {
         let Some(last_index) = self.word.letters.len().checked_sub(1) else {
             self.step_back_toward_previous_word();
+            self.ended_by_backspace = self.is_composing();
             return KeyResult::PassThrough;
         };
         let shows_all_typed_keys = self.preedit.chars().eq(self.raw_keys.iter().copied());
