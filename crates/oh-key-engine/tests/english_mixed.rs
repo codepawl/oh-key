@@ -297,6 +297,9 @@ fn a_third_press_of_the_key_keeps_the_doubled_word_on_screen() {
             ("pass ", "pass "),
             ("passes ", "passes "),
             ("assess ", "assess "),
+            ("masssa ", "massa "),
+            ("bosssa ", "bossa "),
+            ("messsi ", "messi "),
         ],
     );
 }

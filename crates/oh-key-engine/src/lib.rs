@@ -88,9 +88,9 @@ fn copy_keys(keys: &[char]) -> ([char; MAX_WORD_LETTERS], usize) {
     (copy, count)
 }
 
-/// Whether these letters, in any case, are an English word kept with its doubled mark key.
-/// Works on the stack: this runs when a word ends.
-fn is_doubled_key_word_form(letters: impl Iterator<Item = char>) -> bool {
+/// Asks an English word rule about these letters, in any case. Works on the stack: this runs
+/// when a word ends.
+fn english_rule_holds(letters: impl Iterator<Item = char>, rule: fn(&[u8]) -> bool) -> bool {
     let mut lowercase = [0u8; LONGEST_ENGLISH_WORD];
     let mut count = 0;
     for letter in letters {
@@ -100,7 +100,7 @@ fn is_doubled_key_word_form(letters: impl Iterator<Item = char>) -> bool {
         lowercase[count] = letter.to_ascii_lowercase() as u8;
         count += 1;
     }
-    english::is_doubled_key_word_form(&lowercase[..count])
+    rule(&lowercase[..count])
 }
 
 pub struct Engine {
@@ -572,14 +572,18 @@ impl Engine {
         self.config.restore_invalid_word
             && self.config.spell_check
             && self.key_undone
-            && is_doubled_key_word_form(self.raw_keys.iter().copied())
+            && english_rule_holds(
+                self.raw_keys.iter().copied(),
+                english::is_doubled_key_word_form,
+            )
             && !self.shows_doubled_key_word()
     }
 
-    /// The word on screen already is such a word: the key was pressed a third time to put
-    /// the letter back ("passs" shows "pass"), so the keys hold one letter too many.
+    /// The word on screen already starts with such a word: the key was pressed a third time
+    /// to put the letter back ("passs" shows "pass", "masssa" shows "massa"), so the keys
+    /// hold one letter too many.
     fn shows_doubled_key_word(&self) -> bool {
-        is_doubled_key_word_form(self.preedit.chars())
+        english_rule_holds(self.preedit.chars(), english::begins_with_a_listed_word)
     }
 
     /// A letter typed after a doubled tone key, other than another tone key: "ss" then "a"

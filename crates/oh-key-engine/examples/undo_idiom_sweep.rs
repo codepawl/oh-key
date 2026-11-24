@@ -121,7 +121,8 @@ fn keys_for(word: &str, typing: Typing) -> String {
             engine.process_key(second_key);
             keys.push(second_key);
             index += 1;
-            let shows_one_letter = !engine.preedit().ends_with([key, second_key]);
+            let both_letters: String = [key, second_key].iter().collect();
+            let shows_one_letter = !engine.preedit().ends_with(&both_letters);
             if typing == Typing::ThirdPress && shows_one_letter {
                 engine.process_key(second_key);
                 keys.push(second_key);

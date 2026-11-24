@@ -330,6 +330,12 @@ fn starts_like_a_listed_word(lowercase_word: &[u8]) -> bool {
     })
 }
 
+/// A listed word with anything, or nothing, after it.
+pub(crate) fn begins_with_a_listed_word(lowercase_word: &[u8]) -> bool {
+    (1..=lowercase_word.len())
+        .any(|prefix_length| is_doubled_key_word(&lowercase_word[..prefix_length]))
+}
+
 /// `lowercase_word` must already be lowercase ASCII.
 pub(crate) fn is_doubled_key_word(lowercase_word: &[u8]) -> bool {
     DOUBLED_KEY_WORDS
