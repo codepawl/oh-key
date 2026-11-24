@@ -12,6 +12,7 @@ mod english;
 mod letter;
 mod method;
 mod tables;
+mod undo_idioms;
 mod word;
 
 use letter::{Letter, Mark};

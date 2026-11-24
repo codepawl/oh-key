@@ -226,3 +226,49 @@ fn undo_idiom_types_common_english_words() {
         ],
     );
 }
+
+/// A key pressed again the moment it put a mark on ("pas" shows "pá", so "pass" then "te"):
+/// the word on screen stays when it ends, although its keys start like a listed word.
+#[test]
+fn undo_idiom_in_the_middle_of_a_word_keeps_the_word() {
+    check(
+        "undo idiom before more letters",
+        &[
+            ("passte ", "paste "),
+            ("passted ", "pasted "),
+            ("bassic ", "basic "),
+            ("bassically ", "basically "),
+            ("bassed ", "based "),
+            ("masster ", "master "),
+            ("misstake ", "mistake "),
+            ("lossing ", "losing "),
+            ("purrpose ", "purpose "),
+            ("mosstly ", "mostly "),
+            ("guessts ", "guests "),
+            ("Masster ", "Master "),
+            ("BASSIC ", "BASIC "),
+        ],
+    );
+}
+
+/// The same keys are a word of their own when the doubled letter belongs to it.
+#[test]
+fn words_with_their_own_doubled_letter_still_come_back_as_typed() {
+    check(
+        "natural doubles",
+        &[
+            ("passing ", "passing "),
+            ("password ", "password "),
+            ("passion ", "passion "),
+            ("missing ", "missing "),
+            ("misspell ", "misspell "),
+            ("possession ", "possession "),
+            ("dessert ", "dessert "),
+            ("losses ", "losses "),
+            ("massive ", "massive "),
+            ("bassist ", "bassist "),
+            ("purring ", "purring "),
+            ("guessing ", "guessing "),
+        ],
+    );
+}
