@@ -2,6 +2,8 @@
 //! ("pass" arrives as "pas" because the second s undoes the tone). When the
 //! raw keys spell one of these, the word is kept as typed. Sorted for binary search.
 
+use crate::undo_idioms::UNDO_IDIOM_SPELLINGS;
+
 pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
     "access",
     "accessed",
@@ -304,20 +306,19 @@ pub(crate) const DOUBLED_KEY_WORDS: &[&str] = &[
 /// a doubled key ("mess" + "a" is "mesa", "miss" + "c" is "misc").
 const SINGLE_LETTER_ENDINGS: &[u8] = b"sdry";
 
-/// Keys that start like a listed word but are the Telex undo idiom for another English word:
-/// "losser" is "loser" with the tone undone, not "loss" + "er". Sorted for binary search.
-const UNDO_IDIOM_SPELLINGS: &[&str] = &["bossom", "losser", "lossers", "passta"];
-
-/// A listed word, alone or with more letters after it: two or more letters ("passing",
-/// "difference" after "differ") or one of `SINGLE_LETTER_ENDINGS`. `lowercase_word` must
-/// already be lowercase ASCII.
+/// Keys that are given back as typed when the word ends: they start like a listed word and
+/// are not the undo idiom for another word ("losser" is "loser" with the tone undone, not
+/// "loss" + "er"). `lowercase_word` must already be lowercase ASCII.
 pub(crate) fn is_doubled_key_word_form(lowercase_word: &[u8]) -> bool {
     let is_undo_idiom = UNDO_IDIOM_SPELLINGS
         .binary_search_by(|candidate| candidate.as_bytes().cmp(lowercase_word))
         .is_ok();
-    if is_undo_idiom {
-        return false;
-    }
+    !is_undo_idiom && starts_like_a_listed_word(lowercase_word)
+}
+
+/// A listed word, alone or with more letters after it: two or more letters ("passing",
+/// "difference" after "differ") or one of `SINGLE_LETTER_ENDINGS`.
+fn starts_like_a_listed_word(lowercase_word: &[u8]) -> bool {
     (1..=lowercase_word.len()).any(|prefix_length| {
         let (prefix, rest) = lowercase_word.split_at(prefix_length);
         let ending_fits = match rest {
@@ -329,6 +330,12 @@ pub(crate) fn is_doubled_key_word_form(lowercase_word: &[u8]) -> bool {
     })
 }
 
+/// A listed word with anything, or nothing, after it.
+pub(crate) fn begins_with_a_listed_word(lowercase_word: &[u8]) -> bool {
+    (1..=lowercase_word.len())
+        .any(|prefix_length| is_doubled_key_word(&lowercase_word[..prefix_length]))
+}
+
 /// `lowercase_word` must already be lowercase ASCII.
 pub(crate) fn is_doubled_key_word(lowercase_word: &[u8]) -> bool {
     DOUBLED_KEY_WORDS
@@ -338,7 +345,7 @@ pub(crate) fn is_doubled_key_word(lowercase_word: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{DOUBLED_KEY_WORDS, UNDO_IDIOM_SPELLINGS};
+    use super::{DOUBLED_KEY_WORDS, UNDO_IDIOM_SPELLINGS, starts_like_a_listed_word};
 
     #[test]
     fn word_list_is_sorted_and_unique() {
@@ -348,5 +355,16 @@ mod tests {
                 .windows(2)
                 .all(|pair| pair[0] < pair[1])
         );
+    }
+
+    /// A spelling that no rule would give back as typed does nothing in the list.
+    #[test]
+    fn every_undo_idiom_spelling_starts_like_a_listed_word() {
+        let needless: Vec<&str> = UNDO_IDIOM_SPELLINGS
+            .iter()
+            .copied()
+            .filter(|spelling| !starts_like_a_listed_word(spelling.as_bytes()))
+            .collect();
+        assert!(needless.is_empty(), "{needless:?}");
     }
 }

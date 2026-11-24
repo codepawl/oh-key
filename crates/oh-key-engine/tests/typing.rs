@@ -259,7 +259,7 @@ fn telex_double_key_undo() {
             ("this", "thí"),
             ("boxx", "box"),
             ("tieengss", "tieengss"),
-            ("passs ", "passs "),
+            ("passs ", "pass "),
             ("tassk", "task"),
             ("tassa", "tasa"),
             ("messa", "mesa"),

@@ -226,3 +226,80 @@ fn undo_idiom_types_common_english_words() {
         ],
     );
 }
+
+/// A key pressed again the moment it put a mark on ("pas" shows "pá", so "pass" then "te"):
+/// the word on screen stays when it ends, although its keys start like a listed word.
+#[test]
+fn undo_idiom_in_the_middle_of_a_word_keeps_the_word() {
+    check(
+        "undo idiom before more letters",
+        &[
+            ("passte ", "paste "),
+            ("passted ", "pasted "),
+            ("bassic ", "basic "),
+            ("bassically ", "basically "),
+            ("bassed ", "based "),
+            ("masster ", "master "),
+            ("misstake ", "mistake "),
+            ("lossing ", "losing "),
+            ("purrpose ", "purpose "),
+            ("mosstly ", "mostly "),
+            ("guessts ", "guests "),
+            ("Masster ", "Master "),
+            ("BASSIC ", "BASIC "),
+            ("misscalculate ", "miscalculate "),
+            ("passtoral ", "pastoral "),
+            ("passte.", "paste."),
+            ("passte,", "paste,"),
+        ],
+    );
+}
+
+/// The same keys are a word of their own when the doubled letter belongs to it.
+#[test]
+fn words_with_their_own_doubled_letter_still_come_back_as_typed() {
+    check(
+        "natural doubles",
+        &[
+            ("passing ", "passing "),
+            ("password ", "password "),
+            ("passion ", "passion "),
+            ("missing ", "missing "),
+            ("misspell ", "misspell "),
+            ("possession ", "possession "),
+            ("dessert ", "dessert "),
+            ("losses ", "losses "),
+            ("massive ", "massive "),
+            ("bassist ", "bassist "),
+            ("purring ", "purring "),
+            ("guessing ", "guessing "),
+            ("riffle ", "riffle "),
+            ("basses ", "basses "),
+            ("mosses ", "mosses "),
+            ("bassinet ", "bassinet "),
+        ],
+    );
+}
+
+/// A third press puts the letter back on screen ("pas", then "pass"): the word shown is the
+/// word, not the three keys.
+#[test]
+fn a_third_press_of_the_key_keeps_the_doubled_word_on_screen() {
+    check(
+        "third press",
+        &[
+            ("passs ", "pass "),
+            ("bosss ", "boss "),
+            ("Passs ", "Pass "),
+            ("passses ", "passes "),
+            ("lesss ", "less "),
+            ("bufff ", "buff "),
+            ("pass ", "pass "),
+            ("passes ", "passes "),
+            ("assess ", "assess "),
+            ("masssa ", "massa "),
+            ("bosssa ", "bossa "),
+            ("messsi ", "messi "),
+        ],
+    );
+}

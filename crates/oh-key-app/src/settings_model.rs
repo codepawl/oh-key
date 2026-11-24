@@ -42,7 +42,6 @@ pub enum Field {
     SpellCheck,
     RestoreInvalidWord,
     MacroEnabled,
-    EnglishInGames,
     StartVietnamese,
     StartAtSignIn,
     Updates,
@@ -229,11 +228,6 @@ fn switches_card(settings: &Settings) -> Vec<Row> {
         ),
         switch_row(Field::MacroEnabled, "Gõ tắt", engine.macro_enabled),
         switch_row(
-            Field::EnglishInGames,
-            "Tiếng Anh khi chơi game",
-            settings.english_in_games,
-        ),
-        switch_row(
             Field::StartVietnamese,
             "Bắt đầu ở tiếng Việt",
             settings.start_vietnamese,
@@ -325,7 +319,6 @@ pub fn apply_choice(settings: &mut Settings, field: Field, option: usize) -> Eff
         Field::SpellCheck => settings.engine.spell_check = enabled,
         Field::RestoreInvalidWord => settings.engine.restore_invalid_word = enabled,
         Field::MacroEnabled => settings.engine.macro_enabled = enabled,
-        Field::EnglishInGames => settings.english_in_games = enabled,
         Field::StartVietnamese => settings.start_vietnamese = enabled,
         Field::StartAtSignIn => {
             settings.start_at_sign_in = enabled;
@@ -382,7 +375,6 @@ mod tests {
             Field::SpellCheck,
             Field::RestoreInvalidWord,
             Field::MacroEnabled,
-            Field::EnglishInGames,
             Field::StartVietnamese,
             Field::StartAtSignIn,
             Field::SendReports,
@@ -391,7 +383,7 @@ mod tests {
         ] {
             assert!(switch_fields.contains(&field), "{field:?}");
         }
-        assert_eq!(switch_fields.len(), 10);
+        assert_eq!(switch_fields.len(), 9);
     }
 
     #[test]
@@ -524,9 +516,9 @@ mod tests {
     }
 
     #[test]
-    fn the_cards_hold_three_seven_and_four_rows() {
+    fn the_cards_hold_three_six_and_four_rows() {
         let cards = cards(&Settings::default());
-        assert_eq!(card_row_counts(&cards), [3, 7, 4]);
+        assert_eq!(card_row_counts(&cards), [3, 6, 4]);
     }
 
     #[test]

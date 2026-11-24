@@ -12,6 +12,7 @@ mod english;
 mod letter;
 mod method;
 mod tables;
+mod undo_idioms;
 mod word;
 
 use letter::{Letter, Mark};
@@ -85,6 +86,21 @@ fn copy_keys(keys: &[char]) -> ([char; MAX_WORD_LETTERS], usize) {
     let count = keys.len().min(MAX_WORD_LETTERS);
     copy[..count].copy_from_slice(&keys[..count]);
     (copy, count)
+}
+
+/// Asks an English word rule about these letters, in any case. Works on the stack: this runs
+/// when a word ends.
+fn english_rule_holds(letters: impl Iterator<Item = char>, rule: fn(&[u8]) -> bool) -> bool {
+    let mut lowercase = [0u8; LONGEST_ENGLISH_WORD];
+    let mut count = 0;
+    for letter in letters {
+        if count == LONGEST_ENGLISH_WORD || !letter.is_ascii_alphabetic() {
+            return false;
+        }
+        lowercase[count] = letter.to_ascii_lowercase() as u8;
+        count += 1;
+    }
+    rule(&lowercase[..count])
 }
 
 pub struct Engine {
@@ -556,7 +572,18 @@ impl Engine {
         self.config.restore_invalid_word
             && self.config.spell_check
             && self.key_undone
-            && self.raw_keys_are_doubled_key_word()
+            && english_rule_holds(
+                self.raw_keys.iter().copied(),
+                english::is_doubled_key_word_form,
+            )
+            && !self.shows_doubled_key_word()
+    }
+
+    /// The word on screen already starts with such a word: the key was pressed a third time
+    /// to put the letter back ("passs" shows "pass", "masssa" shows "massa"), so the keys
+    /// hold one letter too many.
+    fn shows_doubled_key_word(&self) -> bool {
+        english_rule_holds(self.preedit.chars(), english::begins_with_a_listed_word)
     }
 
     /// A letter typed after a doubled tone key, other than another tone key: "ss" then "a"
@@ -582,19 +609,6 @@ impl Engine {
             .letters
             .extend(self.raw_keys.iter().map(|&key| Letter::plain(key)));
         self.word.tone = 0;
-    }
-
-    fn raw_keys_are_doubled_key_word(&self) -> bool {
-        if self.raw_keys.len() > LONGEST_ENGLISH_WORD
-            || !self.raw_keys.iter().all(char::is_ascii_alphabetic)
-        {
-            return false;
-        }
-        let mut lowercase = [0u8; LONGEST_ENGLISH_WORD];
-        for (slot, key) in lowercase.iter_mut().zip(&self.raw_keys) {
-            *slot = key.to_ascii_lowercase() as u8;
-        }
-        english::is_doubled_key_word_form(&lowercase[..self.raw_keys.len()])
     }
 
     fn apply_action(&mut self, action: Action, key: char, previously_mapped: Option<char>) -> bool {
