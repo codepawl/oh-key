@@ -140,6 +140,12 @@ pub struct Engine {
     /// Boundary keys typed since the previous word; 0 when there is no word to pick up.
     boundaries_after_previous_word: u8,
     macros: Vec<(String, String)>,
+    /// A backspace took off the letter a third press of a mark key had put back ("passs"
+    /// shows "pass", then "pas"), or picked a finished word back up: a word that ends before
+    /// another key is given as it is shown.
+    ends_as_shown: bool,
+    /// A second engine that types keys on the side, to see what they would show.
+    trial: Option<Box<Engine>>,
 }
 
 impl Default for Engine {
@@ -170,6 +176,8 @@ impl Engine {
             previous_word_after_symbol: false,
             boundaries_after_previous_word: 0,
             macros: Vec::new(),
+            ends_as_shown: false,
+            trial: None,
         }
     }
 
@@ -201,6 +209,7 @@ impl Engine {
         self.escaped = false;
         self.replay_pending = false;
         self.boundaries_after_previous_word = 0;
+        self.ends_as_shown = false;
     }
 
     /// Returns the composing word and clears it.
@@ -229,11 +238,16 @@ impl Engine {
     pub fn backspace(&mut self) -> KeyResult {
         let Some(last_index) = self.word.letters.len().checked_sub(1) else {
             self.step_back_toward_previous_word();
+            self.ends_as_shown = self.is_composing();
             return KeyResult::PassThrough;
         };
-        let shows_typed_keys = (self.frozen || self.replay_pending)
-            && !self.escaped
-            && self.preedit.chars().eq(self.raw_keys.iter().copied());
+        let shows_all_typed_keys = self.preedit.chars().eq(self.raw_keys.iter().copied());
+        let shows_typed_keys =
+            (self.frozen || self.replay_pending) && !self.escaped && shows_all_typed_keys;
+        let keys_can_be_typed_again =
+            !self.escaped && !shows_all_typed_keys && self.raw_keys.len() <= MAX_WORD_LETTERS;
+        let (typed_keys, typed_count) = copy_keys(&self.raw_keys);
+        let showed_doubled_key_word = self.shows_doubled_key_word();
         let deletes_tone_carrier =
             self.word.tone_position(self.config.tone_style) == Some(last_index);
         self.word.letters.pop();
@@ -255,7 +269,30 @@ impl Engine {
         self.raw_keys.extend(self.preedit.chars());
         self.frozen = self.validity() == Validity::Invalid;
         self.replay_pending = shows_typed_keys;
+        if keys_can_be_typed_again && let Some(keys_before_last) = typed_count.checked_sub(1) {
+            self.keep_typed_keys_that_show_the_same(&typed_keys[..keys_before_last]);
+        }
+        self.ends_as_shown = showed_doubled_key_word && !self.shows_doubled_key_word();
         KeyResult::Composing
+    }
+
+    /// The backspace has left `preedit` as the text to keep. When the typed keys without
+    /// the last one type exactly that text, the word is rebuilt from them, so a letter that
+    /// a doubled mark key hid is still known when the word ends ("different" shows
+    /// "diferent"; deleting the t and typing it again must not lose the second f).
+    fn keep_typed_keys_that_show_the_same(&mut self, keys: &[char]) {
+        let after_symbol = self.after_symbol;
+        let config = self.config;
+        let mut trial = self
+            .trial
+            .take()
+            .unwrap_or_else(|| Box::new(Engine::new(config)));
+        trial.config = config;
+        let shows_the_same = trial.replay_keys(keys, after_symbol) && trial.preedit == self.preedit;
+        self.trial = Some(trial);
+        if shows_the_same {
+            self.replay_keys(keys, after_symbol);
+        }
     }
 
     pub fn process_key(&mut self, key: char) -> KeyResult {
@@ -291,6 +328,7 @@ impl Engine {
             self.word.letters.push(Letter::plain(key));
         }
         self.raw_keys.push(key);
+        self.ends_as_shown = false;
         self.after_change();
         KeyResult::Composing
     }
@@ -409,6 +447,7 @@ impl Engine {
         self.word.letters.push(Letter::plain(key));
         self.raw_keys.push(key);
         self.frozen = true;
+        self.ends_as_shown = false;
         self.restore_if_doubled_key_word();
         self.refresh_preedit();
         KeyResult::Composing
@@ -439,7 +478,9 @@ impl Engine {
     fn finish_word(&mut self) -> String {
         // Room for the boundary key the caller appends, so the text is allocated once.
         let mut text = String::with_capacity(self.preedit.len() + BOUNDARY_ROOM);
-        if self.should_restore_unfinished_word() || self.should_give_back_english_word() {
+        let gives_back_typed_keys = !self.ends_as_shown
+            && (self.should_restore_unfinished_word() || self.should_give_back_english_word());
+        if gives_back_typed_keys {
             text.extend(self.raw_keys.iter());
         } else {
             text.push_str(&self.preedit);

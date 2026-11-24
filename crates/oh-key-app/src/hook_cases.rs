@@ -136,6 +136,18 @@ pub fn all_cases() -> Vec<Case> {
         ),
         case("reedit-english", Plain, "coffee {BS} disc ", "coffee disc "),
         case(
+            "retype-after-doubled-letter",
+            Plain,
+            "different{BS}t ",
+            "different ",
+        ),
+        case(
+            "extra-letter-after-doubled-letter",
+            Plain,
+            "officee{BS} ",
+            "office ",
+        ),
+        case(
             "english-words",
             Plain,
             "text window coffee ",

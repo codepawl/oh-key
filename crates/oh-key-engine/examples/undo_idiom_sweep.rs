@@ -6,8 +6,10 @@
 //!   keys are "passs"),
 //!
 //! in lower case, Capitalised and UPPER CASE, ended by a space, by punctuation and by the
-//! host committing the word (Enter, a click), and once more with the last letter deleted and
-//! typed again. Every way must give the word.
+//! host committing the word (Enter, a click), once more with the last letter deleted and
+//! typed again, and with one letter too many typed and deleted. Every way must give the
+//! word, except a word whose last key is a mark key when that key is typed again: the mark
+//! shows on screen ("off" shows "of", then "ò").
 //!
 //! `cargo run -p oh-key-engine --example undo_idiom_sweep -- <frequency list> [limit]`
 //! The list has one `word count` pair per line (the count may be missing), most common
@@ -41,16 +43,22 @@ enum Ending {
     Committed,
     /// The last letter deleted and typed again, then a space.
     RetypedLastLetter,
+    /// One letter too many typed after the word and deleted, then a space.
+    ExtraLetterDeleted,
 }
+
+/// A letter that is no mark key in Telex, typed by mistake after the word.
+const EXTRA_LETTER: char = 'k';
 
 const TYPINGS: [Typing; 3] = [Typing::Plain, Typing::MarksUndone, Typing::ThirdPress];
 const CASES: [Case; 3] = [Case::Lower, Case::Capitalised, Case::Upper];
-const ENDINGS: [Ending; 5] = [
+const ENDINGS: [Ending; 6] = [
     Ending::Space,
     Ending::FullStop,
     Ending::Comma,
     Ending::Committed,
     Ending::RetypedLastLetter,
+    Ending::ExtraLetterDeleted,
 ];
 
 fn feed(engine: &mut Engine, visible: &mut String, key: char) {
@@ -80,6 +88,11 @@ fn typed(keys: &str, ending: Ending) -> String {
             }
             feed(&mut engine, &mut visible, ' ');
         }
+        Ending::ExtraLetterDeleted => {
+            feed(&mut engine, &mut visible, EXTRA_LETTER);
+            engine.backspace();
+            feed(&mut engine, &mut visible, ' ');
+        }
     }
     visible.push_str(&engine.commit());
     visible
@@ -87,7 +100,7 @@ fn typed(keys: &str, ending: Ending) -> String {
 
 fn expected_text(word: &str, ending: Ending) -> String {
     let tail = match ending {
-        Ending::Space | Ending::RetypedLastLetter => " ",
+        Ending::Space | Ending::RetypedLastLetter | Ending::ExtraLetterDeleted => " ",
         Ending::FullStop => ".",
         Ending::Comma => ",",
         Ending::Committed => "",
