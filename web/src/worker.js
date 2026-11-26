@@ -8,6 +8,7 @@
 
 import { detectPlatform, downloadTarget, fetchLatestRelease, PUBLIC_REPOSITORY } from "./release.js";
 import { renderPage } from "./page.js";
+import { APPLE_TOUCH_ICON_PNG, FAVICON_ICO, FAVICON_SVG } from "./brand-favicons.js";
 
 const RELEASE_CACHE_KEY = "https://ohkey.codepawl.com/__cache/latest-release";
 const RELEASE_CACHE_SECONDS = 300;
@@ -21,6 +22,15 @@ export default {
     }
     if (url.pathname === "/install.ps1") {
       return serveInstallScript();
+    }
+    if (url.pathname === "/favicon.svg") {
+      return new Response(FAVICON_SVG, { headers: { "content-type": "image/svg+xml", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
+    }
+    if (url.pathname === "/favicon.ico") {
+      return new Response(FAVICON_ICO, { headers: { "content-type": "image/x-icon", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
+    }
+    if (url.pathname === "/apple-touch-icon.png") {
+      return new Response(APPLE_TOUCH_ICON_PNG, { headers: { "content-type": "image/png", "cache-control": "public, max-age=86400", "x-content-type-options": "nosniff" } });
     }
     const downloadMatch = url.pathname.match(/^\/download\/(windows|macos|linux)\/?$/);
     if (downloadMatch) {
