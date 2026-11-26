@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { describeRelease, detectPlatform, downloadTarget, fetchLatestRelease, parseChecksumFileNames } from "../src/release.js";
 import { renderPage } from "../src/page.js";
+import worker from "../src/worker.js";
+import { APPLE_TOUCH_ICON_PNG, FAVICON_ICO, FAVICON_SVG } from "../src/brand-favicons.js";
 
 const HASH = "a".repeat(64);
 const LINUX_FILES = ["oh-key-linux-x86_64.tar.gz", "oh-key_0.2.0_amd64.deb"];
@@ -96,7 +98,7 @@ test("a Linux visitor gets the Linux download when the release has it", () => {
   const release = releaseWithLinux();
   const page = renderPage({ release, platform: "linux" });
   assert.match(page, /class="primary" href="\/download\/linux"/);
-  assert.match(page, /oh-key_0\.2\.0_amd64\.deb · Ubuntu, Debian<\/p>/);
+  assert.match(page, /oh-key_0\.2\.0_amd64\.deb \(Ubuntu, Debian\)<\/p>/);
   assert.match(page, /sudo apt install \.\/oh-key_0\.2\.0_amd64\.deb/);
   assert.match(page, /ibus restart/);
   assert.match(page, /data-tab="linux" aria-selected="true"/);
@@ -119,4 +121,25 @@ test("the page still renders when GitHub is unreachable", () => {
   assert.match(page, /class="primary" href="\/download\/windows"/);
   assert.match(page, /releases\/latest/);
   assert.doesNotMatch(page, /href="\/download\/linux"/);
+});
+
+test("the page links CodePawl kit favicons and omits middle dots", async () => {
+  const page = renderPage({ release: null, platform: "windows" });
+  assert.doesNotMatch(page, /\u00b7/);
+  assert.ok(page.includes('href="/favicon.svg"'));
+  assert.ok(page.includes('href="/favicon.ico"'));
+  assert.ok(page.includes('href="/apple-touch-icon.png"'));
+  assert.ok(page.includes('href="https://codepawl.com"'));
+
+  const svgResponse = await worker.fetch(new Request("https://ohkey.codepawl.com/favicon.svg"), {}, {});
+  assert.equal(svgResponse.status, 200);
+  assert.equal(await svgResponse.text(), FAVICON_SVG);
+
+  const icoResponse = await worker.fetch(new Request("https://ohkey.codepawl.com/favicon.ico"), {}, {});
+  assert.equal(icoResponse.status, 200);
+  assert.deepEqual(new Uint8Array(await icoResponse.arrayBuffer()), FAVICON_ICO);
+
+  const touchResponse = await worker.fetch(new Request("https://ohkey.codepawl.com/apple-touch-icon.png"), {}, {});
+  assert.equal(touchResponse.status, 200);
+  assert.deepEqual(new Uint8Array(await touchResponse.arrayBuffer()), APPLE_TOUCH_ICON_PNG);
 });

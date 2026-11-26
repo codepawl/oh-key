@@ -54,19 +54,19 @@ function codeLine(command) {
 function primaryButton(platform, release) {
   if (platform === "macos") {
     return `<a class="primary" href="/download/macos">${icons.apple}<span>Tải cho macOS</span></a>
-      <p class="file-note">oh-key-macos.zip · Apple Silicon và Intel · macOS 12 trở lên</p>
+      <p class="file-note">oh-key-macos.zip, Apple Silicon và Intel, macOS 12 trở lên</p>
       <p class="status status-beta">${icons.flask}<span>Bản macOS đang thử nghiệm, chưa được thử kỹ trong ứng dụng thật.</span></p>`;
   }
   if (platform === "linux") {
     const fileName = release.linuxDeb ? release.linuxDeb.name : LINUX_TARBALL_NAME;
     const distributions = release.linuxDeb ? "Ubuntu, Debian" : "IBus";
     return `<a class="primary" href="/download/linux">${icons.linux}<span>Tải cho Linux</span></a>
-      <p class="file-note">${escapeHtml(fileName)} · ${distributions}</p>
+      <p class="file-note">${escapeHtml(fileName)} (${distributions})</p>
       <p class="status status-beta">${icons.flask}<span>${LINUX_BETA_NOTE}</span></p>`;
   }
   const fileName = release?.windowsSetup ? "oh-key-setup.exe" : "oh-key-windows-x64.zip";
   return `<a class="primary" href="/download/windows">${icons.windows}<span>Tải cho Windows</span></a>
-    <p class="file-note">${fileName} · Windows 10 và 11 · x64, ARM64, x86</p>`;
+    <p class="file-note">${fileName}, Windows 10 và 11, x64, ARM64, x86</p>`;
 }
 
 const PLATFORM_LINKS = [
@@ -173,10 +173,10 @@ function allFiles(release) {
   const macRows = release.macosZip ? [fileRow("oh-key-macos.zip", "Apple Silicon và Intel", release.macosZip)] : [];
   const linuxRows = [];
   if (release.linuxDeb) {
-    linuxRows.push(fileRow(release.linuxDeb.name, "Ubuntu, Debian · x86_64", release.linuxDeb.url));
+    linuxRows.push(fileRow(release.linuxDeb.name, "Ubuntu, Debian (x86_64)", release.linuxDeb.url));
   }
   if (release.linuxTarball) {
-    linuxRows.push(fileRow(LINUX_TARBALL_NAME, "Mọi bản Linux có IBus · x86_64", release.linuxTarball));
+    linuxRows.push(fileRow(LINUX_TARBALL_NAME, "Mọi bản Linux có IBus (x86_64)", release.linuxTarball));
   }
   const otherRows = [];
   if (release.sourceZip) {
@@ -203,13 +203,15 @@ export function renderPage({ release, platform }) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>oh-key · Bộ gõ tiếng Việt</title>
+<title>oh-key - Bộ gõ tiếng Việt</title>
 <meta name="description" content="oh-key: bộ gõ tiếng Việt viết bằng Rust, nhanh, nhẹ, ít lỗi hơn Unikey. Tải miễn phí cho Windows, macOS và Linux.">
-<meta property="og:title" content="oh-key · Bộ gõ tiếng Việt">
+<meta property="og:title" content="oh-key - Bộ gõ tiếng Việt">
 <meta property="og:description" content="Bộ gõ tiếng Việt nhanh, nhẹ, ít lỗi. Tải cho Windows, macOS và Linux.">
 <meta property="og:url" content="https://ohkey.codepawl.com/">
 <meta name="theme-color" content="#1f1e1d">
-<link rel="icon" href="data:image/svg+xml,${encodeURIComponent(icons.favicon)}">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
