@@ -161,7 +161,7 @@ const ARCHITECTURE_DETAILS = {
 
 function allFiles(release) {
   if (!release) {
-    return `<p class="status status-warn">${icons.warn}<span>Chưa đọc được danh sách bản từ GitHub. <a href="https://github.com/codepawl/oh-key-releases/releases/latest">Mở trang release</a>.</span></p>`;
+    return `<p class="status status-warn">${icons.warn}<span>Chưa đọc được danh sách bản từ GitHub. <a href="https://github.com/anxuanng/oh-key/releases/latest">Mở trang release</a>.</span></p>`;
   }
   const windowsRows = [];
   if (release.windowsSetup) {

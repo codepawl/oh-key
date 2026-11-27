@@ -1,4 +1,4 @@
-# Installs the latest oh-key release (the tray app, oh-key.exe) from codepawl/oh-key-releases,
+# Installs the latest oh-key release (the tray app, oh-key.exe) from anxuanng/oh-key,
 # after checking its SHA-256 against SHA256SUMS.txt. The command line tool is in the release zip.
 #   .\install.ps1    install into %LOCALAPPDATA%\Programs\oh-key and start the app
 # The app then starts at every sign-in; the start-with-Windows switch in its panel turns that off.
@@ -42,11 +42,11 @@ function Set-StartAtSignIn {
 # The tag the latest release points to, read once from the redirect, so the exe and its checksum
 # list come from the same release even if a new one is published in between.
 function Get-LatestTag {
-    $request = [Net.HttpWebRequest]::Create('https://github.com/codepawl/oh-key-releases/releases/latest')
+    $request = [Net.HttpWebRequest]::Create('https://github.com/anxuanng/oh-key/releases/latest')
     $request.AllowAutoRedirect = $false
     $response = $request.GetResponse()
     try { $location = $response.Headers['Location'] } finally { $response.Close() }
-    if ($location -notmatch '^https://github\.com/codepawl/oh-key-releases/releases/tag/(v?\d+\.\d+\.\d+)$') {
+    if ($location -notmatch '^https://github\.com/anxuanng/oh-key/releases/tag/(v?\d+\.\d+\.\d+)$') {
         throw "The releases page named no release ($location)."
     }
     return $Matches[1]
@@ -69,7 +69,7 @@ New-Item -ItemType Directory -Path $stagedFolder | Out-Null
 try {
     $assetName = "oh-key-windows-$architecture.exe"
     $tag = Get-LatestTag
-    $downloadBase = "https://github.com/codepawl/oh-key-releases/releases/download/$tag"
+    $downloadBase = "https://github.com/anxuanng/oh-key/releases/download/$tag"
     Write-Host "Downloading $assetName from $tag..."
     $assetPath = Join-Path $workFolder $assetName
     $checksumsPath = Join-Path $workFolder 'SHA256SUMS.txt'

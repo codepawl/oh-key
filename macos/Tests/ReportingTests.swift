@@ -38,9 +38,9 @@ private func testVersionCompare() {
 }
 
 private func testReleaseTag() {
-    let tag = UpdateCheck.tag(fromReleaseURL: "https://github.com/codepawl/oh-key-releases/releases/tag/v0.3.0")
+    let tag = UpdateCheck.tag(fromReleaseURL: "https://github.com/anxuanng/oh-key/releases/tag/v0.3.0")
     expect("tag from the redirect", tag, "v0.3.0")
-    expect("no tag in a plain page", UpdateCheck.tag(fromReleaseURL: "https://github.com/codepawl/oh-key-releases/releases"), nil)
+    expect("no tag in a plain page", UpdateCheck.tag(fromReleaseURL: "https://github.com/anxuanng/oh-key/releases"), nil)
 }
 
 private func testScrubber() {

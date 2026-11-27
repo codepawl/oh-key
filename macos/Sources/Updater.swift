@@ -2,7 +2,7 @@ import Cocoa
 
 /// Looks for a newer release and tells the user through the input menu. An input method cannot
 /// replace itself while the system has it loaded, so the menu item opens the release page.
-/// The newest tag is where https://github.com/codepawl/oh-key-releases/releases/latest redirects.
+/// The newest tag is where https://github.com/anxuanng/oh-key/releases/latest redirects.
 enum Updater {
     private static let firstCheckDelay: TimeInterval = 10
     private static let checkInterval: TimeInterval = 6 * 3600

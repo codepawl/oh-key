@@ -343,9 +343,9 @@ mod tests {
     #[test]
     fn splits_a_release_link_into_host_and_path() {
         let (host, path) =
-            split_https_url("https://github.com/codepawl/oh-key-releases/releases/latest").unwrap();
+            split_https_url("https://github.com/anxuanng/oh-key/releases/latest").unwrap();
         assert_eq!(host, "github.com");
-        assert_eq!(path, "/codepawl/oh-key-releases/releases/latest");
+        assert_eq!(path, "/anxuanng/oh-key/releases/latest");
         assert_eq!(split_https_url("https://example.com").unwrap().1, "/");
     }
 
@@ -360,8 +360,8 @@ mod tests {
 
     #[test]
     fn a_redirect_stays_on_github_over_https() {
-        let current = "https://github.com/codepawl/oh-key-releases/releases/latest";
-        let tag = "https://github.com/codepawl/oh-key-releases/releases/tag/v1.0.0";
+        let current = "https://github.com/anxuanng/oh-key/releases/latest";
+        let tag = "https://github.com/anxuanng/oh-key/releases/tag/v1.0.0";
         assert_eq!(
             resolve_redirect(current, tag, &GITHUB_HOSTS).as_deref(),
             Ok(tag)

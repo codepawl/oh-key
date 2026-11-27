@@ -31,15 +31,15 @@ function fakeFetch(location, sumsText) {
 }
 
 test("reads the tag from the redirect and the files from SHA256SUMS.txt", async () => {
-  const release = await fetchLatestRelease(fakeFetch("https://github.com/codepawl/oh-key-releases/releases/tag/v0.2.0", SUMS_WITH_SETUP));
+  const release = await fetchLatestRelease(fakeFetch("https://github.com/anxuanng/oh-key/releases/tag/v0.2.0", SUMS_WITH_SETUP));
   assert.equal(release.version, "0.2.0");
-  assert.equal(release.windowsSetup, "https://github.com/codepawl/oh-key-releases/releases/download/v0.2.0/oh-key-setup.exe");
+  assert.equal(release.windowsSetup, "https://github.com/anxuanng/oh-key/releases/download/v0.2.0/oh-key-setup.exe");
   assert.deepEqual(release.windowsZips.map((zip) => zip.architecture), ["x64", "arm64", "x86"]);
   assert.ok(release.macosZip.endsWith("/v0.2.0/oh-key-macos.zip"));
 });
 
 test("a redirect to something other than a tag is an error", async () => {
-  await assert.rejects(fetchLatestRelease(fakeFetch("https://github.com/codepawl/oh-key-releases/releases", "")));
+  await assert.rejects(fetchLatestRelease(fakeFetch("https://github.com/anxuanng/oh-key/releases", "")));
 });
 
 test("checksum lines with a star and blank lines parse", () => {
@@ -48,8 +48,8 @@ test("checksum lines with a star and blank lines parse", () => {
 
 test("Windows downloads fall back to the x64 zip when a release has no installer", () => {
   const release = describeRelease("v0.1.0", ["oh-key-windows-x64.zip", "oh-key-macos.zip"]);
-  assert.equal(downloadTarget(release, "windows"), "https://github.com/codepawl/oh-key-releases/releases/download/v0.1.0/oh-key-windows-x64.zip");
-  assert.equal(downloadTarget(release, "macos"), "https://github.com/codepawl/oh-key-releases/releases/download/v0.1.0/oh-key-macos.zip");
+  assert.equal(downloadTarget(release, "windows"), "https://github.com/anxuanng/oh-key/releases/download/v0.1.0/oh-key-windows-x64.zip");
+  assert.equal(downloadTarget(release, "macos"), "https://github.com/anxuanng/oh-key/releases/download/v0.1.0/oh-key-macos.zip");
 });
 
 test("platform detection", () => {
@@ -76,7 +76,7 @@ test("the page leads with the visitor's platform and lists every file", () => {
 });
 
 test("Linux files are matched by pattern and /download/linux prefers the deb", () => {
-  const base = "https://github.com/codepawl/oh-key-releases/releases/download/v0.2.0";
+  const base = "https://github.com/anxuanng/oh-key/releases/download/v0.2.0";
   const release = describeRelease("v0.2.0", [...LINUX_FILES, "oh-key-macos.zip"]);
   assert.equal(release.linuxDeb.name, "oh-key_0.2.0_amd64.deb");
   assert.equal(release.linuxDeb.url, `${base}/oh-key_0.2.0_amd64.deb`);

@@ -1,4 +1,4 @@
-//! Self-update from GitHub Releases of the public `codepawl/oh-key-releases` repository (the
+//! Self-update from GitHub Releases of the public `anxuanng/oh-key` repository (the
 //! source stays private): find the latest tag, download the exe for this architecture and
 //! `SHA256SUMS.txt`, verify the hash, try the new exe, swap it in place and restart.
 //!
@@ -11,8 +11,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::{app_log, http};
 
-const RELEASES: &str = "https://github.com/codepawl/oh-key-releases/releases";
-const TAG_PAGE_PREFIX: &str = "https://github.com/codepawl/oh-key-releases/releases/tag/";
+const RELEASES: &str = "https://github.com/anxuanng/oh-key/releases";
+const TAG_PAGE_PREFIX: &str = "https://github.com/anxuanng/oh-key/releases/tag/";
 /// Set while a freshly installed version has not yet proved it keeps running.
 const PROBATION_FILE: &str = "update-unconfirmed.txt";
 pub const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -84,7 +84,7 @@ pub fn check() -> Result<Check, String> {
     }
 }
 
-/// "v0.5.0" from "https://github.com/codepawl/oh-key-releases/releases/tag/v0.5.0". Only that
+/// "v0.5.0" from "https://github.com/anxuanng/oh-key/releases/tag/v0.5.0". Only that
 /// repository's tag page counts, and only a plain version number is accepted as the tag.
 pub fn tag_from_release_url(url: &str) -> Option<String> {
     let url = url.trim_end_matches('\0').trim();
@@ -450,16 +450,16 @@ mod tests {
 
     #[test]
     fn reads_the_tag_from_the_redirect() {
-        let url = "https://github.com/codepawl/oh-key-releases/releases/tag/v0.5.0";
+        let url = "https://github.com/anxuanng/oh-key/releases/tag/v0.5.0";
         assert_eq!(tag_from_release_url(url).as_deref(), Some("v0.5.0"));
         assert_eq!(
-            tag_from_release_url("https://github.com/codepawl/oh-key-releases/releases"),
+            tag_from_release_url("https://github.com/anxuanng/oh-key/releases"),
             None
         );
         assert_eq!(tag_from_release_url("https://x/releases/tag/a/b"), None);
-        let with_nul = "https://github.com/codepawl/oh-key-releases/releases/tag/v0.5.0\0";
+        let with_nul = "https://github.com/anxuanng/oh-key/releases/tag/v0.5.0\0";
         assert_eq!(tag_from_release_url(with_nul).as_deref(), Some("v0.5.0"));
-        let other_host = "https://evil.example/codepawl/oh-key-releases/releases/tag/v0.5.0";
+        let other_host = "https://evil.example/anxuanng/oh-key/releases/tag/v0.5.0";
         assert_eq!(tag_from_release_url(other_host), None);
         let other_repo = "https://github.com/someone/else/releases/tag/v0.5.0";
         assert_eq!(tag_from_release_url(other_repo), None);

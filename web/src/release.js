@@ -3,7 +3,7 @@
 // redirects (the same way the app's updater finds it) and the file list from SHA256SUMS.txt,
 // which every release carries.
 
-export const PUBLIC_REPOSITORY = "codepawl/oh-key-releases";
+export const PUBLIC_REPOSITORY = "anxuanng/oh-key";
 const RELEASES_URL = `https://github.com/${PUBLIC_REPOSITORY}/releases`;
 const TAG_PATTERN = /\/releases\/tag\/(v\d+\.\d+\.\d+)$/;
 

@@ -1,6 +1,6 @@
 # oh-key
 
-Vietnamese typing app for Windows in Rust, in the Unikey style (a tray app with a low-level keyboard hook): faster and with fewer bugs than Unikey. Repository: `codepawl/oh-key` (private).
+Vietnamese typing app for Windows in Rust, in the Unikey style (a tray app with a low-level keyboard hook): faster and with fewer bugs than Unikey. Repository: `anxuanng/oh-key` (public).
 
 ## Layout
 
@@ -18,7 +18,7 @@ Vietnamese typing app for Windows in Rust, in the Unikey style (a tray app with 
 - Ctrl+Shift chord (`ToggleChordTracker` in `hook.rs`): each Ctrl or Shift press is checked against the held keys (`HeldModifiers`), because releases go missing (secure desktop, elevated windows, a removed hook); a foreground change does not reset it.
 - `docs/research`: notes on Unikey behaviour and design decisions. `windows-tsf.md` is kept for reference only: the TSF text service was dropped on 2026-11-12.
 - `install.ps1` (release install into `%LOCALAPPDATA%\Programs\oh-key`, no admin, `-StartAtSignIn`) and `tools/dev-install.ps1` (same from a local `target\lead` build; stops the running app and starts the new one through explorer).
-- `.github/workflows`: `ci.yml` (fmt, clippy, tests, Windows builds of the app and CLI for x64/x86/arm64) and `release.yml` (tag `v*` builds, packages `oh-key-windows-<arch>.zip` with `oh-key.exe` and `oh-key-cli.exe`, `oh-key-setup.exe` from `installer/oh-key.iss` (Inno Setup, per user, all three architectures, installed and uninstalled once in CI) and the macOS zip, and publishes a GitHub Release here and in the public `codepawl/oh-key-releases` through the `RELEASES_TOKEN` secret of the `public-release` environment; a pull request touching the workflow, `installer/` or `macos/` runs it as a dry run without publishing; a tag with a hyphen is a public pre-release).
+- `.github/workflows`: `ci.yml` (fmt, clippy, tests, Windows builds of the app and CLI for x64/x86/arm64) and `release.yml` (tag `v*` builds, packages `oh-key-windows-<arch>.zip` with `oh-key.exe` and `oh-key-cli.exe`, `oh-key-setup.exe` from `installer/oh-key.iss` (Inno Setup, per user, all three architectures, installed and uninstalled once in CI), the macOS zip, and Linux packages, publishing directly to GitHub Releases on `anxuanng/oh-key`; a pull request touching the workflow, `installer/` or `macos/` runs it as a dry run without publishing).
 - `web/`: the download page at `ohkey.codepawl.com`, a Cloudflare Worker (custom domain). It reads the latest public release from the `releases/latest` redirect and its `SHA256SUMS.txt`, so a new release needs no page change; `/download/windows`, `/download/macos` and `/install.ps1` redirect or proxy to the latest files. `npm test` in `web/`, deploy with `npx wrangler deploy` there.
 
 ## Checks to run before handing off

@@ -118,7 +118,7 @@ static void on_bus_disconnected(IBusBus *bus, gpointer user_data) {
 static void register_component(IBusBus *bus) {
     IBusComponent *component = ibus_component_new(
         COMPONENT_NAME, "oh-key Vietnamese input", VERSION_STRING, "GPL-3.0-or-later", "codepawl",
-        "https://github.com/codepawl/oh-key", "", "oh-key");
+        "https://github.com/anxuanng/oh-key", "", "oh-key");
     IBusEngineDesc *description = ibus_engine_desc_new(
         ENGINE_NAME, "oh-key", "Vietnamese typing (Telex, VNI)", "vi", "GPL-3.0-or-later", "codepawl",
         "", "us");

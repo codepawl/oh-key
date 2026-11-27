@@ -37,7 +37,7 @@ irm https://ohkey.codepawl.com/install.ps1 | iex
 
 The script downloads the latest release for your processor (x64, x86 or arm64) and checks its SHA-256. It copies `oh-key.exe` to `%LOCALAPPDATA%\Programs\oh-key` and starts the app. No administrator rights are needed. From then on the app starts at every sign-in; turn off "Khởi động cùng Windows" in its panel to stop that. `oh-key-cli.exe` is in the release zip.
 
-You can also download `oh-key-windows-<arch>.zip` from the [latest release](https://github.com/codepawl/oh-key-releases/releases/latest) and unzip it anywhere.
+You can also download `oh-key-windows-<arch>.zip` from the [latest release](https://github.com/anxuanng/oh-key/releases/latest) and unzip it anywhere.
 
 ### macOS
 
@@ -55,7 +55,7 @@ Settings live in `~/Library/Application Support/oh-key/config.toml`, the same fo
 
 Cài đặt trên Linux (IBus, mặc định của GNOME; cũng chạy trên KDE và các môi trường khác qua IBus):
 
-1. Tải `oh-key-linux-x86_64.tar.gz` hoặc `oh-key_<phiên bản>_amd64.deb` từ [bản phát hành mới nhất](https://github.com/codepawl/oh-key-releases/releases/latest).
+1. Tải `oh-key-linux-x86_64.tar.gz` hoặc `oh-key_<phiên bản>_amd64.deb` từ [bản phát hành mới nhất](https://github.com/anxuanng/oh-key/releases/latest).
 2. Bản `.deb`: `sudo apt install ./oh-key_<phiên bản>_amd64.deb`. Bản tar: `tar xzf oh-key-linux-x86_64.tar.gz && cd oh-key-linux-x86_64 && sudo ./install.sh`.
 3. Chạy `ibus restart`.
 4. Mở Settings > Keyboard > Input Sources, thêm Vietnamese (oh-key).
@@ -64,7 +64,7 @@ Cấu hình nằm ở `$XDG_CONFIG_HOME/oh-key/config.toml` (mặc định `~/.c
 
 Install on Linux (IBus, the GNOME default; it also works on KDE and other desktops through IBus):
 
-1. Download `oh-key-linux-x86_64.tar.gz` or `oh-key_<version>_amd64.deb` from the [latest release](https://github.com/codepawl/oh-key-releases/releases/latest).
+1. Download `oh-key-linux-x86_64.tar.gz` or `oh-key_<version>_amd64.deb` from the [latest release](https://github.com/anxuanng/oh-key/releases/latest).
 2. For the `.deb`: `sudo apt install ./oh-key_<version>_amd64.deb`. For the tarball: `tar xzf oh-key-linux-x86_64.tar.gz && cd oh-key-linux-x86_64 && sudo ./install.sh`.
 3. Run `ibus restart`.
 4. Open Settings > Keyboard > Input Sources and add Vietnamese (oh-key).

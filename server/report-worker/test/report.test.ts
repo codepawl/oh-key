@@ -137,7 +137,7 @@ describe("issue creation and dedupe", () => {
     expect(response.status).toBe(201);
     expect(githubCalls).toHaveLength(1);
     const call = githubCalls[0];
-    expect(call.url).toBe("https://api.github.com/repos/codepawl/oh-key/issues");
+    expect(call.url).toBe("https://api.github.com/repos/anxuanng/oh-key/issues");
     expect(call.body.labels).toEqual(["auto-report"]);
     expect(String(call.body.title)).toBe("[auto] panic: panic at crates/oh-key-engine/src/lib.rs:120:5");
     expect(String(call.body.body)).toContain("| Platform | `windows 10.0.26300 (x86_64)` |");

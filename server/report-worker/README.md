@@ -1,6 +1,6 @@
 # oh-key-report
 
-Cloudflare Worker that receives crash and error reports from oh-key and files them as GitHub issues in the private `codepawl/oh-key` repo, labelled `auto-report`.
+Cloudflare Worker that receives crash and error reports from oh-key and files them as GitHub issues in the private `anxuanng/oh-key` repo, labelled `auto-report`.
 
 - `POST /v1/report`: JSON body up to 16 KB, strict schema (unknown fields are rejected). Returns 201 (new issue), 200 (duplicate counted), 400, 413, 415, 429.
 - `GET /health`: returns `ok`.
@@ -24,7 +24,7 @@ npm install
 npx wrangler kv namespace create REPORTS
 ```
 
-Put the printed id into `wrangler.toml` (`[[kv_namespaces]]`, replacing `REPLACE_WITH_KV_NAMESPACE_ID`). Create a fine-grained GitHub token with only `Issues: read and write` on `codepawl/oh-key`, then:
+Put the printed id into `wrangler.toml` (`[[kv_namespaces]]`, replacing `REPLACE_WITH_KV_NAMESPACE_ID`). Create a fine-grained GitHub token with only `Issues: read and write` on `anxuanng/oh-key`, then:
 
 ```
 npx wrangler secret put GITHUB_TOKEN

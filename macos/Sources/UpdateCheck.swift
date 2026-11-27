@@ -2,8 +2,8 @@ import Foundation
 
 /// Pure parts of the update check, shared with the tests.
 enum UpdateCheck {
-    static let releasesURL = "https://github.com/codepawl/oh-key-releases/releases/latest"
-    static let releasePageBase = "https://github.com/codepawl/oh-key-releases/releases/tag/"
+    static let releasesURL = "https://github.com/anxuanng/oh-key/releases/latest"
+    static let releasePageBase = "https://github.com/anxuanng/oh-key/releases/tag/"
 
     /// "v0.5.0" from ".../releases/tag/v0.5.0".
     static func tag(fromReleaseURL url: String) -> String? {

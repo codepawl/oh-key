@@ -19,7 +19,7 @@ binding = "REPORTS"
 id = "ae523d59b5a04a6baf6a0f4058c1ceac"
 
 [vars]
-GITHUB_REPO = "codepawl/oh-key"
+GITHUB_REPO = "anxuanng/oh-key"
 MAX_REPORTS_PER_IP_PER_HOUR = "10"
 MAX_NEW_ISSUES_PER_DAY = "30"
 MAX_NEW_LOW_PRIORITY_ISSUES_PER_DAY = "10"

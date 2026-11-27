@@ -34,7 +34,7 @@ Priority: optional
 Architecture: amd64
 Depends: ibus (>= 1.5.4), libibus-1.0-5, libglib2.0-0
 Maintainer: codepawl <noreply@codepawl.com>
-Homepage: https://github.com/codepawl/oh-key
+Homepage: https://github.com/anxuanng/oh-key
 Description: Vietnamese typing for IBus (Telex, VNI, VIQR)
  oh-key is a fast Vietnamese input method in the Unikey style. After installing, run
  "ibus restart" and add Vietnamese (oh-key) in the keyboard settings.

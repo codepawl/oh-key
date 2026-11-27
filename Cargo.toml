@@ -6,7 +6,7 @@ members = ["crates/*"]
 version = "0.2.4"
 edition = "2024"
 license = "GPL-3.0-or-later"
-repository = "https://github.com/codepawl/oh-key"
+repository = "https://github.com/anxuanng/oh-key"
 
 [profile.release]
 lto = "fat"
