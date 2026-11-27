@@ -125,11 +125,13 @@ jobs:
         run: bash macos/build.sh
       - name: Check the bundle and run the editor tests
         run: bash macos/verify.sh
+      # Keep artifacts short-lived (1 day) so CI never leaves 90-day bundles in org storage.
       - uses: actions/upload-artifact@v4
         with:
           name: oh-key-macos
           path: target/mac/oh-key-macos.zip
           if-no-files-found: error
+          retention-days: 1
 
   hook-e2e:
     # Types through the real keyboard hook into the program's own windows. A hosted runner may
@@ -270,9 +272,11 @@ jobs:
           dpkg-deb --contents target/linux/oh-key_*_amd64.deb | grep -E 'libexec/ibus-engine-oh-key|component/oh-key.xml'
           tar -tzf target/linux/oh-key-linux-x86_64.tar.gz | grep -E 'install.sh|ibus-engine-oh-key'
           grep -q '<exec>/usr/libexec/ibus-engine-oh-key --ibus</exec>' target/linux/deb/usr/share/ibus/component/oh-key.xml
+      # Keep artifacts short-lived (1 day) so CI never leaves 90-day bundles in org storage.
       - uses: actions/upload-artifact@v4
         with:
           name: oh-key-linux
           path: |
             target/linux/oh-key-linux-x86_64.tar.gz
             target/linux/oh-key_*_amd64.deb
+          retention-days: 1

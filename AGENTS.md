@@ -42,6 +42,7 @@ CI runs the pure crates on Windows, Linux and macOS, so keep them free of platfo
 - No allocations on the engine's per-keystroke path unless a benchmark shows it does not matter.
 - Always use absolute paths; do not `cd` into subfolders.
 - Do not commit secrets or personal data.
+- GitHub Actions storage: set `retention-days: 1` (never 90-day default) on every `actions/upload-artifact` in `.github/workflows/` so CI/release artifacts never pile up in org storage.
 
 ## Measuring beside an installed copy
 

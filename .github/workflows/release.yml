@@ -91,6 +91,7 @@ jobs:
           name: build-${{ matrix.arch }}
           path: build
           if-no-files-found: error
+          retention-days: 1
 
   macos:
     # The macOS input method, one universal zip.
@@ -107,6 +108,7 @@ jobs:
           name: oh-key-macos-zip
           path: target/mac/oh-key-macos.zip
           if-no-files-found: error
+          retention-days: 1
 
   source:
     # GPL: every release carries the complete source of exactly the tagged commit. git archive
@@ -121,6 +123,7 @@ jobs:
           name: oh-key-source
           path: oh-key-source.zip
           if-no-files-found: error
+          retention-days: 1
 
   package:
     # One zip per architecture, with oh-key.exe and oh-key-cli.exe at the top.
@@ -149,6 +152,7 @@ jobs:
             oh-key-windows-*.zip
             oh-key-windows-*.exe
           if-no-files-found: error
+          retention-days: 1
 
   installer:
     # oh-key-setup.exe, the one-click installer for every Windows (installer/oh-key.iss). It is
@@ -202,6 +206,7 @@ jobs:
           name: oh-key-setup
           path: installer/output/oh-key-setup.exe
           if-no-files-found: error
+          retention-days: 1
 
   publish:
     # The private repository's own release, with notes generated from its pull requests.
@@ -345,6 +350,7 @@ jobs:
             target/linux/oh-key-linux-x86_64.tar.gz
             target/linux/oh-key_*_amd64.deb
           if-no-files-found: error
+          retention-days: 1
 
   publish-linux:
     # Attached after the release exists and after the macOS step, which also rewrites
